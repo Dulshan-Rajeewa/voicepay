@@ -33,7 +33,7 @@ export const config = Object.freeze({
   transactionLogPath: process.env.TRANSACTION_LOG_PATH ?? '',
   maxPaymentUsd,
   geminiApiKey: process.env.GEMINI_API_KEY ?? '',
-  geminiModel: process.env.GEMINI_MODEL ?? 'gemini-2.0-flash',
+  geminiModel: process.env.GEMINI_MODEL ?? 'gemini-3.5-flash',
   paypalClientId: process.env.PAYPAL_CLIENT_ID ?? '',
   paypalClientSecret: process.env.PAYPAL_CLIENT_SECRET ?? '',
   paypalVaultId: process.env.PAYPAL_VAULT_ID ?? '',

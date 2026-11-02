@@ -240,8 +240,13 @@ async function generateResponse(contents) {
         tools: [{ functionDeclarations }],
       },
     })
-  } catch {
-    throw new Error('The assistant service is unavailable right now. Please try again later.')
+  } catch (error) {
+    console.error('Gemini request failed:', error instanceof Error ? error.message : error)
+    const serviceError = new Error(
+      'The assistant service is unavailable right now. Please check GEMINI_API_KEY and GEMINI_MODEL, then try again.',
+    )
+    serviceError.statusCode = 502
+    throw serviceError
   }
 }
 

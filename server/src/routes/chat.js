@@ -17,7 +17,7 @@ router.post('/chat', async (request, response) => {
     })
     response.json({ sessionId, ...result })
   } catch (error) {
-    response.status(400).json({ error: error.message })
+    response.status(error.statusCode || 400).json({ error: error.message })
   }
 })
 

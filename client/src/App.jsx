@@ -107,7 +107,7 @@ function App() {
           },
           body: JSON.stringify({ message: trimmed }),
         })
-        const data = await response.json()
+        const data = await response.json().catch(() => ({}))
         if (!response.ok) throw new Error(data.error || 'The assistant could not respond.')
         if (data.sessionId) {
           sessionIdRef.current = data.sessionId

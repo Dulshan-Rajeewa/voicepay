@@ -94,7 +94,7 @@ Copy `server/.env.example` to `server/.env`. Never commit `server/.env`.
 | `USE_MOCK_PAYPAL` | No | Set `true` for the deterministic demo; set `false` for PayPal Sandbox. |
 | `MAX_PAYMENT_USD` | No | Server-side maximum per payment; defaults to `100`. |
 | `GEMINI_API_KEY` | For AI | Gemini API key. Keep it only in `server/.env`. |
-| `GEMINI_MODEL` | No | Gemini model; defaults to `gemini-2.0-flash`. |
+| `GEMINI_MODEL` | No | Gemini model; defaults to `gemini-3.5-flash`. |
 | `PAYPAL_BASE_URL` | For PayPal | Sandbox base URL: `https://api-m.sandbox.paypal.com`. |
 | `PAYPAL_CLIENT_ID` | For PayPal | Sandbox REST app client ID. |
 | `PAYPAL_CLIENT_SECRET` | For PayPal | Sandbox REST app secret. |
@@ -153,7 +153,7 @@ The default mock mode returns realistic local data and never contacts PayPal.
 
 ## How AI is used
 
-VoicePay uses Gemini through `@google/genai`, with the model configured by `GEMINI_MODEL` and defaulting to `gemini-2.0-flash`.
+VoicePay uses Gemini through `@google/genai`, with the model configured by `GEMINI_MODEL` and defaulting to `gemini-3.5-flash`.
 
 The model can call:
 
