@@ -148,10 +148,13 @@ function App() {
             : { actionId: pendingAction.id }
         const response = await fetch(endpoint, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Session-Id': sessionIdRef.current,
+          },
           body: JSON.stringify(body),
         })
-        const data = await response.json()
+        const data = await response.json().catch(() => ({}))
         if (!response.ok) throw new Error(data.error || 'The action could not be completed.')
         setPendingAction(null)
         setExpiryWarning('')
