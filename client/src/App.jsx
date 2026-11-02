@@ -54,6 +54,9 @@ function App() {
   const [expiryWarning, setExpiryWarning] = useState('')
   const [lastSpoken, setLastSpoken] = useState('')
   const recognitionRef = useRef(null)
+  const isListeningRef = useRef(false)
+  const shortcutPressedRef = useRef(false)
+  const ignoreClickRef = useRef(false)
   const pendingRef = useRef(null)
   const conversationRef = useRef(null)
   const sessionIdRef = useRef(getSessionId())
@@ -173,6 +176,7 @@ function App() {
 
   const finishListening = useCallback(() => {
     recognitionRef.current?.stop()
+    isListeningRef.current = false
     setIsListening(false)
   }, [])
 
@@ -184,16 +188,14 @@ function App() {
       return
     }
 
-    if (isListening) {
-      finishListening()
-      return
-    }
+    if (isListeningRef.current) return
 
     const recognition = new Recognition()
     recognition.continuous = false
     recognition.interimResults = false
     recognition.lang = document.documentElement.lang || 'en-US'
     recognition.onstart = () => {
+      isListeningRef.current = true
       setIsListening(true)
       setStatus('Listening')
       vibrate([80, 60, 80])
@@ -211,29 +213,88 @@ function App() {
       }
     }
     recognition.onerror = () => {
+      isListeningRef.current = false
       setIsListening(false)
       setStatus('Error')
       announce('I could not hear that. Please try again or type your message.', 'error')
       vibrate([80, 60, 80])
     }
     recognition.onend = () => {
+      isListeningRef.current = false
       setIsListening(false)
-      if (status === 'Listening') setStatus('Ready')
+      setStatus((current) => (current === 'Listening' ? 'Ready' : current))
     }
     recognitionRef.current = recognition
-    recognition.start()
+    try {
+      recognition.start()
+    } catch (error) {
+      isListeningRef.current = false
+      setIsListening(false)
+      setStatus('Error')
+      announce(error.message || 'Voice input could not be started. Please try again.', 'error')
+    }
   }, [
     announce,
-    finishListening,
     handlePending,
-    isListening,
     lastSpoken,
     pendingAction,
     sendMessage,
     speak,
-    status,
     vibrate,
   ])
+
+  const handleSpeakClick = useCallback(() => {
+    if (ignoreClickRef.current) {
+      ignoreClickRef.current = false
+      return
+    }
+    if (isListeningRef.current) {
+      finishListening()
+    } else {
+      startListening()
+    }
+  }, [finishListening, startListening])
+
+  const handleSpeakPointerDown = useCallback(
+    (event) => {
+      event.preventDefault()
+      ignoreClickRef.current = true
+      event.currentTarget.setPointerCapture?.(event.pointerId)
+      startListening()
+    },
+    [startListening],
+  )
+
+  const handleSpeakPointerUp = useCallback(
+    (event) => {
+      event.preventDefault()
+      if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId)
+      }
+      finishListening()
+    },
+    [finishListening],
+  )
+
+  const handleSpeakKeyDown = useCallback(
+    (event) => {
+      if (event.code === 'Space') {
+        event.preventDefault()
+        if (!event.repeat) startListening()
+      }
+    },
+    [startListening],
+  )
+
+  const handleSpeakKeyUp = useCallback(
+    (event) => {
+      if (event.code === 'Space') {
+        event.preventDefault()
+        finishListening()
+      }
+    },
+    [finishListening],
+  )
 
   useEffect(() => {
     const handleKeyDown = (event) => {
@@ -245,14 +306,31 @@ function App() {
       } else if (event.key.toLowerCase() === 'r' && !typing) {
         event.preventDefault()
         speak(lastSpoken || 'There is no previous answer to repeat.')
-      } else if (event.code === 'Space' && !typing) {
+      } else if (
+        event.code === 'Space' &&
+        !typing &&
+        !(target instanceof HTMLButtonElement) &&
+        !event.repeat
+      ) {
         event.preventDefault()
+        shortcutPressedRef.current = true
         startListening()
       }
     }
+    const handleKeyUp = (event) => {
+      if (event.code === 'Space' && shortcutPressedRef.current) {
+        event.preventDefault()
+        shortcutPressedRef.current = false
+        finishListening()
+      }
+    }
     document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [handlePending, lastSpoken, speak, startListening, pendingAction])
+    document.addEventListener('keyup', handleKeyUp)
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown)
+      document.removeEventListener('keyup', handleKeyUp)
+    }
+  }, [finishListening, handlePending, lastSpoken, pendingAction, speak, startListening])
 
   useEffect(() => {
     if (!pendingAction) return undefined
@@ -312,16 +390,24 @@ function App() {
       <main>
         <section className="control-panel" aria-labelledby="assistant-heading">
           <h2 id="assistant-heading">Talk to VoicePay</h2>
-          <p>Use your voice or type. Voice and text responses are always shown together.</p>
+          <p>
+            Use your voice or type. Voice and text responses are always shown together.
+            Hold the button, or hold Space anywhere outside a text field, while you speak.
+          </p>
           <button
             type="button"
             className={`speak-button ${isListening ? 'is-listening' : ''}`}
-            onClick={startListening}
+            onClick={handleSpeakClick}
+            onPointerDown={handleSpeakPointerDown}
+            onPointerUp={handleSpeakPointerUp}
+            onPointerCancel={handleSpeakPointerUp}
+            onKeyDown={handleSpeakKeyDown}
+            onKeyUp={handleSpeakKeyUp}
             aria-pressed={isListening}
-            aria-label={isListening ? 'Stop listening' : 'Hold to speak'}
+            aria-label={isListening ? 'Release to stop listening' : 'Hold to speak'}
           >
             <span aria-hidden="true">{isListening ? '■' : '●'}</span>
-            {isListening ? 'Stop listening' : 'Hold to speak'}
+            {isListening ? 'Release to stop' : 'Hold to speak'}
           </button>
           <form
             className="message-form"

@@ -141,6 +141,8 @@ main {
   color: var(--accent-text);
   font-size: clamp(1.4rem, 5vw, 2rem);
   font-weight: 800;
+  touch-action: none;
+  user-select: none;
 }
 
 .speak-button span {
