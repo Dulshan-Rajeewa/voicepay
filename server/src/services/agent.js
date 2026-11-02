@@ -230,29 +230,113 @@ function getHistory(sessionId) {
   return sessionHistories.get(sessionId)
 }
 
+function getLocalGreeting(message) {
+  if (/^(hi|hello|hey|good morning|good afternoon|good evening)[!.? ]*$/i.test(message.trim())) {
+    return {
+      reply: 'Hello. I am VoicePay, your accessible payment assistant. How can I help you today?',
+      pendingAction: null,
+    }
+  }
+  return null
+}
+
+const spokenAmounts = new Map([
+  ['one', 1],
+  ['two', 2],
+  ['three', 3],
+  ['four', 4],
+  ['five', 5],
+  ['ten', 10],
+  ['twenty', 20],
+  ['thirty', 30],
+  ['forty', 40],
+  ['fifty', 50],
+  ['one hundred', 100],
+])
+
+function getLocalPaymentRequest(message) {
+  const match = message.trim().match(
+    /^(?:send|pay|give|transfer)\s+(.+?)\s+(?:dollars?|usd)\s+to\s+(.+)$/i,
+  )
+  if (!match) return null
+
+  const amountText = match[1].trim().toLowerCase()
+  const amount = Number(amountText) || spokenAmounts.get(amountText)
+  if (!amount) return null
+  return { amount, contactName: match[2].trim() }
+}
+
+function getErrorStatus(error) {
+  return Number(error?.status ?? error?.statusCode ?? error?.error?.code)
+}
+
+function isTemporaryGeminiError(error) {
+  return [429, 500, 502, 503, 504].includes(getErrorStatus(error))
+}
+
+function isQuotaExceeded(error) {
+  return getErrorStatus(error) === 429 && /quota|rate limit/i.test(
+    error instanceof Error ? error.message : String(error),
+  )
+}
+
 async function generateResponse(contents) {
-  try {
-    return await ai.models.generateContent({
-      model: config.geminiModel,
-      contents,
-      config: {
-        systemInstruction,
-        tools: [{ functionDeclarations }],
-      },
-    })
-  } catch (error) {
-    console.error('Gemini request failed:', error instanceof Error ? error.message : error)
-    const serviceError = new Error(
-      'The assistant service is unavailable right now. Please check GEMINI_API_KEY and GEMINI_MODEL, then try again.',
-    )
-    serviceError.statusCode = 502
-    throw serviceError
+  const maxAttempts = 3
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await ai.models.generateContent({
+        model: config.geminiModel,
+        contents,
+        config: {
+          systemInstruction,
+          tools: [{ functionDeclarations }],
+        },
+      })
+    } catch (error) {
+      const status = getErrorStatus(error)
+      const details = error instanceof Error ? error.message : String(error)
+      console.error(`Gemini request failed (attempt ${attempt}/${maxAttempts}):`, details)
+
+      if (attempt < maxAttempts && isTemporaryGeminiError(error) && !isQuotaExceeded(error)) {
+        await new Promise((resolve) => setTimeout(resolve, 500 * 2 ** (attempt - 1)))
+        continue
+      }
+
+      const message =
+        status === 401 || status === 403
+          ? 'The assistant could not authenticate with Gemini. Please check GEMINI_API_KEY.'
+          : status === 404
+            ? 'The configured Gemini model is unavailable. Please check GEMINI_MODEL.'
+            : isQuotaExceeded(error)
+              ? 'The assistant has reached its Gemini usage limit. Payment proposals can still be prepared, but general questions require a new quota window or billing plan.'
+            : 'The assistant service is temporarily unavailable. Please try again in a moment.'
+      const serviceError = new Error(message)
+      serviceError.statusCode = 502
+      throw serviceError
+    }
   }
 }
 
 export async function chat({ sessionId, message }) {
   if (typeof message !== 'string' || !message.trim()) {
     throw new Error('Please provide a message.')
+  }
+
+  const localGreeting = getLocalGreeting(message)
+  if (localGreeting) {
+    return localGreeting
+  }
+
+  const localPaymentRequest = getLocalPaymentRequest(message)
+  if (localPaymentRequest) {
+    const result = await proposePayment(localPaymentRequest, sessionId)
+    return {
+      reply:
+        result.pendingAction?.humanSummary ||
+        result.clarification ||
+        'I could not prepare that payment.',
+      pendingAction: result.pendingAction || null,
+    }
   }
 
   if (!ai) {
@@ -267,7 +351,7 @@ export async function chat({ sessionId, message }) {
   let response = await generateResponse(history)
 
   let pendingAction = null
-  if (response.functionCalls?.length) {
+  for (let toolRound = 0; response.functionCalls?.length && toolRound < 3; toolRound += 1) {
     const modelContent = response.candidates?.[0]?.content ?? {
       role: 'model',
       parts: response.functionCalls.map((functionCall) => ({ functionCall })),
@@ -286,11 +370,17 @@ export async function chat({ sessionId, message }) {
           pendingAction = result.pendingAction
         }
         functionResponses.push({
-          functionResponse: { name: functionCall.name, response: result },
+          functionResponse: {
+            name: functionCall.name,
+            response: { result },
+          },
         })
       } catch (error) {
         functionResponses.push({
-          functionResponse: { name: functionCall.name, response: { error: error.message } },
+          functionResponse: {
+            name: functionCall.name,
+            response: { error: error.message },
+          },
         })
       }
     }

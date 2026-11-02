@@ -55,6 +55,7 @@ function App() {
   const [lastSpoken, setLastSpoken] = useState('')
   const recognitionRef = useRef(null)
   const isListeningRef = useRef(false)
+  const stoppingRecognitionRef = useRef(false)
   const shortcutPressedRef = useRef(false)
   const ignoreClickRef = useRef(false)
   const pendingRef = useRef(null)
@@ -175,6 +176,7 @@ function App() {
   )
 
   const finishListening = useCallback(() => {
+    stoppingRecognitionRef.current = true
     recognitionRef.current?.stop()
     isListeningRef.current = false
     setIsListening(false)
@@ -190,17 +192,23 @@ function App() {
 
     if (isListeningRef.current) return
 
+    stoppingRecognitionRef.current = false
     const recognition = new Recognition()
     recognition.continuous = false
     recognition.interimResults = false
     recognition.lang = document.documentElement.lang || 'en-US'
     recognition.onstart = () => {
+      if (stoppingRecognitionRef.current) {
+        recognition.stop()
+        return
+      }
       isListeningRef.current = true
       setIsListening(true)
       setStatus('Listening')
       vibrate([80, 60, 80])
     }
     recognition.onresult = (event) => {
+      stoppingRecognitionRef.current = false
       const transcript = event.results[0][0].transcript
       setMessage(transcript)
       if (/^(repeat|repeat last answer)$/i.test(transcript.trim())) {
@@ -212,7 +220,10 @@ function App() {
         sendMessage(transcript)
       }
     }
-    recognition.onerror = () => {
+    recognition.onerror = (event) => {
+      if (stoppingRecognitionRef.current || event.error === 'aborted') {
+        return
+      }
       isListeningRef.current = false
       setIsListening(false)
       setStatus('Error')
@@ -220,6 +231,7 @@ function App() {
       vibrate([80, 60, 80])
     }
     recognition.onend = () => {
+      stoppingRecognitionRef.current = false
       isListeningRef.current = false
       setIsListening(false)
       setStatus((current) => (current === 'Listening' ? 'Ready' : current))
