@@ -279,32 +279,46 @@ export async function createOrder({ items, total, currency }) {
     mockOrders.set(orderId, { status: 'CREATED', total: orderTotal })
     return {
       orderId,
-      approvalLink: `https://www.sandbox.paypal.com/checkoutnow?token=${orderId}`,
+      approvalLink: config.paypalVaultId
+        ? null
+        : `https://www.sandbox.paypal.com/checkoutnow?token=${orderId}`,
+      paymentPath: config.paypalVaultId ? 'vaulted' : 'approval',
+    }
+  }
+
+  const orderBody = {
+    intent: 'CAPTURE',
+    purchase_units: [
+      {
+        amount: {
+          currency_code: orderCurrency,
+          value: orderTotal,
+          breakdown: {
+            item_total: { currency_code: orderCurrency, value: orderTotal },
+          },
+        },
+        items: orderItems,
+      },
+    ],
+  }
+
+  if (config.paypalVaultId) {
+    orderBody.payment_source = {
+      card: {
+        vault_id: config.paypalVaultId,
+      },
     }
   }
 
   const payload = await paypalRequest('/v2/checkout/orders', {
     method: 'POST',
-    body: JSON.stringify({
-      intent: 'CAPTURE',
-      purchase_units: [
-        {
-          amount: {
-            currency_code: orderCurrency,
-            value: orderTotal,
-            breakdown: {
-              item_total: { currency_code: orderCurrency, value: orderTotal },
-            },
-          },
-          items: orderItems,
-        },
-      ],
-    }),
+    body: JSON.stringify(orderBody),
   })
 
   return {
     orderId: payload.id,
     approvalLink: payload.links?.find((link) => link.rel === 'approve')?.href,
+    paymentPath: config.paypalVaultId ? 'vaulted' : 'approval',
   }
 }
 

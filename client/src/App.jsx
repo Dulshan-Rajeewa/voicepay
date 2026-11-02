@@ -1,121 +1,422 @@
-import { useState } from 'react'
-import heroImg from './assets/hero.png'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import './App.css'
 
-function App() {
-  const [count, setCount] = useState(0)
+const SESSION_STORAGE_KEY = 'voicepay-session-id'
+const SPEECH_RATE_KEY = 'voicepay-speech-rate'
+const WARNING_WINDOW_MS = 60 * 1000
+
+const getSessionId = () => {
+  const saved = localStorage.getItem(SESSION_STORAGE_KEY)
+  if (saved) return saved
+  const id = crypto.randomUUID()
+  localStorage.setItem(SESSION_STORAGE_KEY, id)
+  return id
+}
+
+function ProductCard({ item }) {
+  const details = [
+    ['Description', item.description],
+    ['Size', item.size],
+    ['Color', item.color],
+    ['Materials', item.materials],
+    ['In the box', item.box],
+    ['Care', item.care],
+    ['Tactile features', item.tactile],
+    ['Sound and voice', item.soundVoice],
+  ].filter(([, value]) => value)
 
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
+    <article className="product-card" aria-label={`Product: ${item.name}`}>
+      <h3>{item.name}</h3>
+      <p>
+        {item.quantity ? `Quantity: ${item.quantity}. ` : ''}
+        {item.unitAmount ? `Price: $${Number(item.unitAmount).toFixed(2)} each.` : ''}
+      </p>
+      {details.map(([label, value]) => (
+        <p key={label} className="product-description">
+          <strong>{label}:</strong> {value}
+        </p>
+      ))}
+    </article>
+  )
+}
+
+function App() {
+  const [messages, setMessages] = useState([])
+  const [message, setMessage] = useState('')
+  const [pendingAction, setPendingAction] = useState(null)
+  const [isListening, setIsListening] = useState(false)
+  const [isSending, setIsSending] = useState(false)
+  const [speechRate, setSpeechRate] = useState(() =>
+    Number(localStorage.getItem(SPEECH_RATE_KEY) || '1'),
+  )
+  const [status, setStatus] = useState('Ready')
+  const [expiryWarning, setExpiryWarning] = useState('')
+  const [lastSpoken, setLastSpoken] = useState('')
+  const recognitionRef = useRef(null)
+  const pendingRef = useRef(null)
+  const conversationRef = useRef(null)
+  const sessionIdRef = useRef(getSessionId())
+
+  const vibrate = useCallback((pattern) => {
+    if ('vibrate' in navigator) navigator.vibrate(pattern)
+  }, [])
+
+  const speak = useCallback(
+    (text) => {
+      if (!text || !('speechSynthesis' in window)) return
+      window.speechSynthesis.cancel()
+      const utterance = new SpeechSynthesisUtterance(text)
+      utterance.rate = speechRate
+      window.speechSynthesis.speak(utterance)
+      setLastSpoken(text)
+    },
+    [speechRate],
+  )
+
+  const announce = useCallback(
+    (text, kind = 'assistant') => {
+      setMessages((current) => [
+        ...current,
+        { id: crypto.randomUUID(), kind, text },
+      ])
+      speak(text)
+    },
+    [speak],
+  )
+
+  const sendMessage = useCallback(
+    async (text) => {
+      const trimmed = text.trim()
+      if (!trimmed || isSending) return
+
+      setMessage('')
+      setIsSending(true)
+      setStatus('Sending')
+      setMessages((current) => [
+        ...current,
+        { id: crypto.randomUUID(), kind: 'user', text: trimmed },
+      ])
+
+      try {
+        const response = await fetch('/api/chat', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Session-Id': sessionIdRef.current,
+          },
+          body: JSON.stringify({ message: trimmed }),
+        })
+        const data = await response.json()
+        if (!response.ok) throw new Error(data.error || 'The assistant could not respond.')
+        if (data.sessionId) {
+          sessionIdRef.current = data.sessionId
+          localStorage.setItem(SESSION_STORAGE_KEY, data.sessionId)
+        }
+        announce(data.reply || 'I did not receive a response.')
+        setPendingAction(data.pendingAction || null)
+        if (data.pendingAction) {
+          vibrate([120, 80, 120])
+        }
+        setStatus('Ready')
+      } catch (error) {
+        const text = error.message || 'Something went wrong. Please try again.'
+        announce(`Sorry. ${text}`, 'error')
+        vibrate([80, 60, 80])
+        setStatus('Error')
+      } finally {
+        setIsSending(false)
+      }
+    },
+    [announce, isSending, vibrate],
+  )
+
+  const handlePending = useCallback(
+    async (decision) => {
+      if (!pendingAction || isSending) return
+      setIsSending(true)
+      setStatus(decision === 'confirm' ? 'Confirming' : 'Cancelling')
+      try {
+        const endpoint = decision === 'confirm' ? '/api/confirm' : '/api/cancel'
+        const body =
+          decision === 'confirm'
+            ? { actionId: pendingAction.id, confirmation: true }
+            : { actionId: pendingAction.id }
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        })
+        const data = await response.json()
+        if (!response.ok) throw new Error(data.error || 'The action could not be completed.')
+        setPendingAction(null)
+        setExpiryWarning('')
+        const resultText =
+          decision === 'confirm'
+            ? data.action?.status === 'completed'
+              ? 'Your payment is complete.'
+              : data.action?.result?.message || 'Your action needs more PayPal approval.'
+            : 'The pending action was cancelled.'
+        announce(resultText)
+        vibrate(decision === 'confirm' ? [180, 80, 180] : [60])
+        setStatus('Ready')
+      } catch (error) {
+        announce(`Sorry. ${error.message || 'That action could not be completed.'}`, 'error')
+        vibrate([80, 60, 80])
+        setStatus('Error')
+      } finally {
+        setIsSending(false)
+      }
+    },
+    [announce, isSending, pendingAction, vibrate],
+  )
+
+  const finishListening = useCallback(() => {
+    recognitionRef.current?.stop()
+    setIsListening(false)
+  }, [])
+
+  const startListening = useCallback(() => {
+    const Recognition =
+      window.SpeechRecognition || window.webkitSpeechRecognition
+    if (!Recognition) {
+      announce('Speech recognition is not available in this browser. You can type instead.', 'error')
+      return
+    }
+
+    if (isListening) {
+      finishListening()
+      return
+    }
+
+    const recognition = new Recognition()
+    recognition.continuous = false
+    recognition.interimResults = false
+    recognition.lang = document.documentElement.lang || 'en-US'
+    recognition.onstart = () => {
+      setIsListening(true)
+      setStatus('Listening')
+      vibrate([80, 60, 80])
+    }
+    recognition.onresult = (event) => {
+      const transcript = event.results[0][0].transcript
+      setMessage(transcript)
+      if (/^(repeat|repeat last answer)$/i.test(transcript.trim())) {
+        speak(lastSpoken || 'There is no previous answer to repeat.')
+        setMessage('')
+      } else if (/^(confirm|cancel)$/i.test(transcript.trim()) && pendingAction) {
+        handlePending(transcript.trim().toLowerCase())
+      } else {
+        sendMessage(transcript)
+      }
+    }
+    recognition.onerror = () => {
+      setIsListening(false)
+      setStatus('Error')
+      announce('I could not hear that. Please try again or type your message.', 'error')
+      vibrate([80, 60, 80])
+    }
+    recognition.onend = () => {
+      setIsListening(false)
+      if (status === 'Listening') setStatus('Ready')
+    }
+    recognitionRef.current = recognition
+    recognition.start()
+  }, [
+    announce,
+    finishListening,
+    handlePending,
+    isListening,
+    lastSpoken,
+    pendingAction,
+    sendMessage,
+    speak,
+    status,
+    vibrate,
+  ])
+
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      const target = event.target
+      const typing = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement
+      if (event.key === 'Escape' && pendingAction) {
+        event.preventDefault()
+        handlePending('cancel')
+      } else if (event.key.toLowerCase() === 'r' && !typing) {
+        event.preventDefault()
+        speak(lastSpoken || 'There is no previous answer to repeat.')
+      } else if (event.code === 'Space' && !typing) {
+        event.preventDefault()
+        startListening()
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [handlePending, lastSpoken, speak, startListening, pendingAction])
+
+  useEffect(() => {
+    if (!pendingAction) return undefined
+    pendingRef.current?.focus()
+    window.setTimeout(() => speak(pendingAction.humanSummary), 0)
+  }, [pendingAction, speak])
+
+  useEffect(() => {
+    if (!pendingAction) return undefined
+    const checkExpiry = () => {
+      const remaining = new Date(pendingAction.expiresAt).getTime() - Date.now()
+      if (remaining <= 0 && expiryWarning !== 'This pending action has expired.') {
+        window.setTimeout(() => setExpiryWarning('This pending action has expired.'), 0)
+        window.setTimeout(
+          () => speak('This pending action has expired. It can no longer be confirmed.'),
+          0,
+        )
+      } else if (remaining <= WARNING_WINDOW_MS && !expiryWarning) {
+        window.setTimeout(() => setExpiryWarning('This action expires in less than one minute.'), 0)
+        window.setTimeout(
+          () => speak('Warning. This action expires in less than one minute.'),
+          0,
+        )
+      }
+    }
+    checkExpiry()
+    const interval = window.setInterval(checkExpiry, 5000)
+    return () => window.clearInterval(interval)
+  }, [pendingAction, speak, expiryWarning])
+
+  useEffect(() => {
+    conversationRef.current?.scrollTo({
+      top: conversationRef.current.scrollHeight,
+      behavior: 'smooth',
+    })
+  }, [messages])
+
+  const updateSpeechRate = (event) => {
+    const value = Number(event.target.value)
+    setSpeechRate(value)
+    localStorage.setItem(SPEECH_RATE_KEY, String(value))
+  }
+
+  return (
+    <div className="app-shell">
+      <a className="skip-link" href="#conversation">
+        Skip to conversation
+      </a>
+      <header className="site-header">
         <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.jsx</code> and save to test <code>HMR</code>
-          </p>
+          <p className="eyebrow">Accessible PayPal assistant</p>
+          <h1>VoicePay</h1>
         </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
+        <p className="status" role="status">{status}</p>
+      </header>
+
+      <main>
+        <section className="control-panel" aria-labelledby="assistant-heading">
+          <h2 id="assistant-heading">Talk to VoicePay</h2>
+          <p>Use your voice or type. Voice and text responses are always shown together.</p>
+          <button
+            type="button"
+            className={`speak-button ${isListening ? 'is-listening' : ''}`}
+            onClick={startListening}
+            aria-pressed={isListening}
+            aria-label={isListening ? 'Stop listening' : 'Hold to speak'}
+          >
+            <span aria-hidden="true">{isListening ? '■' : '●'}</span>
+            {isListening ? 'Stop listening' : 'Hold to speak'}
+          </button>
+          <form
+            className="message-form"
+            onSubmit={(event) => {
+              event.preventDefault()
+              sendMessage(message)
+            }}
+          >
+            <label htmlFor="message">Type a message</label>
+            <div className="input-row">
+              <input
+                id="message"
+                value={message}
+                onChange={(event) => setMessage(event.target.value)}
+                placeholder="For example: send 20 dollars to Nimal"
+                autoComplete="off"
+              />
+              <button type="submit" className="primary-button" disabled={isSending || !message.trim()}>
+                Send
+              </button>
+            </div>
+          </form>
+          <div className="settings-row">
+            <label htmlFor="speech-rate">Speech rate</label>
+            <input
+              id="speech-rate"
+              type="range"
+              min="0.6"
+              max="1.5"
+              step="0.1"
+              value={speechRate}
+              onChange={updateSpeechRate}
+              aria-describedby="speech-rate-value"
+            />
+            <output id="speech-rate-value" htmlFor="speech-rate">{speechRate.toFixed(1)}x</output>
+            <button type="button" className="secondary-button" onClick={() => speak(lastSpoken || 'There is no previous answer to repeat.')}>
+              Repeat last answer
+            </button>
+          </div>
+        </section>
+
+        <section
+          id="conversation"
+          className="conversation"
+          aria-labelledby="conversation-heading"
+          aria-live="polite"
+          ref={conversationRef}
         >
-          Count is {count}
-        </button>
-      </section>
+          <h2 id="conversation-heading">Conversation</h2>
+          {messages.length === 0 ? (
+            <p className="empty-state">Your conversation will appear here.</p>
+          ) : (
+            <ol className="message-list">
+              {messages.map((entry) => (
+                <li key={entry.id} className={`message message-${entry.kind}`}>
+                  <span className="message-label">{entry.kind === 'user' ? 'You' : 'VoicePay'}</span>
+                  <p>{entry.text}</p>
+                </li>
+              ))}
+            </ol>
+          )}
+        </section>
 
-      <div className="ticks"></div>
+        {pendingAction && (
+          <section
+            className="pending-panel"
+            aria-labelledby="pending-heading"
+            ref={pendingRef}
+            tabIndex="-1"
+          >
+            <p className="eyebrow">Needs confirmation</p>
+            <h2 id="pending-heading">Review this action</h2>
+            <p className="pending-summary">{pendingAction.humanSummary}</p>
+            {pendingAction.details?.items?.map((item) => (
+              <ProductCard key={item.name} item={item} />
+            ))}
+            {expiryWarning && <p className="warning" role="alert">{expiryWarning}</p>}
+            <div className="pending-actions">
+              <button type="button" className="confirm-button" onClick={() => handlePending('confirm')} disabled={isSending}>
+                Confirm
+              </button>
+              <button type="button" className="cancel-button" onClick={() => handlePending('cancel')} disabled={isSending}>
+                Cancel
+              </button>
+            </div>
+            <p className="confirmation-help">You can also say “confirm” or “cancel”.</p>
+          </section>
+        )}
+      </main>
 
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
+      <footer className="help-footer">
+        <h2>Keyboard shortcuts</h2>
+        <p><kbd>Space</kbd> talk <span aria-hidden="true">·</span> <kbd>Escape</kbd> cancel <span aria-hidden="true">·</span> <kbd>R</kbd> repeat</p>
+      </footer>
+    </div>
   )
 }
 

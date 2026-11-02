@@ -1,1 +1,326 @@
-// Catalog and shopping helpers will be added in a later task.
+const products = [
+  {
+    id: 'large-print-label-maker',
+    name: 'Large Print Label Maker',
+    price: 29.99,
+    category: 'home',
+    description: 'A compact label maker with high-contrast controls for organizing household items.',
+    size: '4.8 inches wide, 2.2 inches deep, and 5.1 inches tall',
+    color: 'Matte black with white controls',
+    materials: 'Recycled ABS plastic and silicone buttons',
+    box: 'Label maker, one starter tape cartridge, wrist strap, and quick-start guide',
+    care: 'Wipe with a dry or slightly damp cloth. Do not immerse or use solvents.',
+    tactile: 'Raised power, print, and cut buttons with a textured cartridge latch.',
+    soundVoice: 'Makes a short beep when ready and a longer tone when a label is printed. No speech output.',
+  },
+  {
+    id: 'tactile-kitchen-timer',
+    name: 'Tactile Kitchen Timer',
+    price: 18.5,
+    category: 'home',
+    description: 'A kitchen timer with large tactile controls and a strong vibration alert.',
+    size: '3.5-inch diameter and 1 inch thick',
+    color: 'Bright yellow body with black markings',
+    materials: 'Food-safe silicone cover and impact-resistant plastic',
+    box: 'Timer, magnetic back plate, and printed instructions',
+    care: 'Clean the silicone cover with mild soap and water. Keep the timer body dry.',
+    tactile: 'Large raised minute and second buttons, a ridged edge, and a distinct start button.',
+    soundVoice: 'Provides vibration and an adjustable chime. It does not speak numbers aloud.',
+  },
+  {
+    id: 'braille-notebook',
+    name: 'Braille Notebook',
+    price: 12,
+    category: 'stationery',
+    description: 'A sturdy bound notebook for braille writing, tactile notes, and raised diagrams.',
+    size: '8.5 by 11 inches with 60 pages',
+    color: 'Navy blue cover with a light gray elastic band',
+    materials: 'Heavyweight acid-free paper and coated board cover',
+    box: 'One notebook and one elastic page marker',
+    care: 'Store flat and keep away from moisture and direct heat.',
+    tactile: 'Thick pages support slate-and-stylus writing and have rounded page corners.',
+    soundVoice: 'No sound or voice features.',
+  },
+  {
+    id: 'vibrating-doorbell',
+    name: 'Vibrating Doorbell Receiver',
+    price: 44.95,
+    category: 'home',
+    description: 'A portable receiver that alerts with vibration and selectable tones when the doorbell rings.',
+    size: 'Receiver is 4.2 by 2.1 by 0.9 inches',
+    color: 'White receiver with a blue indicator light',
+    materials: 'ABS plastic and a rubberized clip',
+    box: 'Receiver, doorbell button, batteries, wall tape, and screws',
+    care: 'Wipe clean. Replace batteries when the low-battery tone sounds.',
+    tactile: 'Large pairing button and a raised volume rocker.',
+    soundVoice: 'Offers vibration and four tones. It has no spoken announcements.',
+  },
+  {
+    id: 'talking-kitchen-scale',
+    name: 'Talking Kitchen Scale',
+    price: 39.99,
+    category: 'kitchen',
+    description: 'A talking scale that announces weight and has a high-contrast weighing surface.',
+    size: '7.1 by 5.5 by 1.2 inches',
+    color: 'White platform with black trim',
+    materials: 'Tempered glass platform and plastic housing',
+    box: 'Scale, two AAA batteries, and instruction card',
+    care: 'Clean the platform with a damp cloth. Do not place it under running water.',
+    tactile: 'Three raised buttons for power, unit, and tare.',
+    soundVoice: 'Speaks weight in English and announces low battery and overload warnings.',
+  },
+  {
+    id: 'braille-label-tape',
+    name: 'Braille Label Tape Set',
+    price: 15.75,
+    category: 'accessibility',
+    description: 'Embossed adhesive tape for labeling drawers, containers, and personal items.',
+    size: 'Three rolls, each 0.5 inches wide and 13 feet long',
+    color: 'White tape with black backing',
+    materials: 'Embossable vinyl with permanent adhesive',
+    box: 'Three tape rolls and a small storage case',
+    care: 'Keep rolls sealed and dry. Apply only to clean, smooth surfaces.',
+    tactile: 'Creates raised braille dots and a peelable backing edge.',
+    soundVoice: 'No sound or voice features.',
+  },
+  {
+    id: 'large-button-remote',
+    name: 'Large Button TV Remote',
+    price: 21.99,
+    category: 'electronics',
+    description: 'A simplified remote with widely spaced, high-contrast buttons.',
+    size: '7.2 by 2.4 by 0.8 inches',
+    color: 'Black body with white and yellow buttons',
+    materials: 'ABS plastic with silicone button membrane',
+    box: 'Remote, two AAA batteries, and setup guide',
+    care: 'Wipe with a dry cloth and keep away from liquids.',
+    tactile: 'Distinct shapes for power, volume, channel, and navigation buttons.',
+    soundVoice: 'Buttons make a soft click. The remote has no voice output.',
+  },
+  {
+    id: 'portable-text-reader',
+    name: 'Portable Text Reader',
+    price: 89,
+    category: 'electronics',
+    description: 'A handheld device that photographs printed text and reads it aloud.',
+    size: '5.8 by 2.7 by 0.8 inches',
+    color: 'Dark gray with a blue scan button',
+    materials: 'Recycled plastic shell and glass camera lens',
+    box: 'Reader, USB-C cable, lanyard, and quick-start guide',
+    care: 'Protect the camera lens and wipe it with a microfiber cloth.',
+    tactile: 'Raised scan button, textured volume rocker, and lanyard loop.',
+    soundVoice: 'Reads captured text aloud and provides spoken menu guidance.',
+  },
+  {
+    id: 'tactile-measuring-cups',
+    name: 'Tactile Measuring Cups',
+    price: 16.49,
+    category: 'kitchen',
+    description: 'A set of measuring cups with raised capacity markings and easy-grip handles.',
+    size: 'Four cups from one-quarter to one cup',
+    color: 'Red handles with translucent cups',
+    materials: 'Food-grade polypropylene',
+    box: 'Four measuring cups on a connecting ring',
+    care: 'Top-rack dishwasher safe. Dry fully before storing.',
+    tactile: 'Raised capacity markings and different handle shapes for each size.',
+    soundVoice: 'No sound or voice features.',
+  },
+  {
+    id: 'vibration-alarm-clock',
+    name: 'Vibration Alarm Clock',
+    price: 34.5,
+    category: 'bedroom',
+    description: 'An alarm clock with a strong under-pillow vibration pad and spoken setup menus.',
+    size: 'Clock is 5.1 by 3.2 by 1.4 inches; pad is 4 by 2.5 inches',
+    color: 'Black clock with white display',
+    materials: 'Plastic housing and silicone vibration pad',
+    box: 'Clock, vibration pad, power adapter, and backup battery',
+    care: 'Keep the vibration pad dry and dust the display with a soft cloth.',
+    tactile: 'Raised snooze bar and separate alarm and time buttons.',
+    soundVoice: 'Speaks the time and alarm state. Alerts use voice, tone, and vibration.',
+  },
+  {
+    id: 'phone-screen-reader-stand',
+    name: 'Phone Screen Reader Stand',
+    price: 22,
+    category: 'accessibility',
+    description: 'An adjustable stand that keeps a phone stable for voice assistant use.',
+    size: 'Folds to 5 by 3.5 by 0.8 inches',
+    color: 'Silver with a black rubber cradle',
+    materials: 'Anodized aluminum and silicone pads',
+    box: 'Stand and protective drawstring pouch',
+    care: 'Wipe with a damp cloth and fold gently.',
+    tactile: 'Hinged angle stops and a raised lip prevent the phone from sliding.',
+    soundVoice: 'No sound or voice features; it supports hands-free phone use.',
+  },
+  {
+    id: 'raised-line-drawing-kit',
+    name: 'Raised Line Drawing Kit',
+    price: 27.8,
+    category: 'education',
+    description: 'A kit for making reusable raised-line drawings and simple tactile maps.',
+    size: 'Board is 9 by 12 inches',
+    color: 'Black board with white drawing film',
+    materials: 'Rubber drawing board and reusable plastic film',
+    box: 'Drawing board, 20 film sheets, stylus, and storage sleeve',
+    care: 'Store film flat and clean the board with a dry cloth.',
+    tactile: 'The stylus creates raised lines that can be felt from either side.',
+    soundVoice: 'No sound or voice features.',
+  },
+  {
+    id: 'smart-speaker-mini',
+    name: 'Smart Speaker Mini',
+    price: 49.99,
+    category: 'electronics',
+    description: 'A compact speaker for voice timers, reminders, weather, and hands-free questions.',
+    size: '4 inches wide and 3.5 inches tall',
+    color: 'Charcoal fabric with a black base',
+    materials: 'Recycled plastic and acoustic fabric',
+    box: 'Speaker, power adapter, and setup card',
+    care: 'Dust with a dry cloth. Keep the speaker away from liquids.',
+    tactile: 'Raised mute switch and two tactile volume buttons.',
+    soundVoice: 'Responds to voice commands and confirms settings aloud.',
+  },
+  {
+    id: 'accessible-playing-cards',
+    name: 'Accessible Playing Cards',
+    price: 13.25,
+    category: 'leisure',
+    description: 'Playing cards with large print and braille marks for inclusive games.',
+    size: 'Standard bridge size, 2.25 by 3.5 inches per card',
+    color: 'White cards with black and red print',
+    materials: 'Laminated cardstock',
+    box: 'One 54-card deck in a rigid case',
+    care: 'Keep cards dry and return them to the case after use.',
+    tactile: 'Braille rank and suit marks are embossed in the upper-left corner.',
+    soundVoice: 'No sound or voice features.',
+  },
+  {
+    id: 'high-contrast-wall-calendar',
+    name: 'High Contrast Wall Calendar',
+    price: 19.95,
+    category: 'organization',
+    description: 'A large wall calendar with bold dates, generous writing spaces, and tactile month tabs.',
+    size: '12 by 17 inches when open',
+    color: 'Black, white, and yellow',
+    materials: 'Recycled paper with matte laminate tabs',
+    box: 'Calendar and hanging loop',
+    care: 'Keep indoors and write with a pencil or erasable pen.',
+    tactile: 'Raised month tabs make the current section easy to find by touch.',
+    soundVoice: 'No sound or voice features.',
+  },
+  {
+    id: 'usb-braille-display-sleeve',
+    name: 'USB Braille Display Sleeve',
+    price: 31.6,
+    category: 'accessibility',
+    description: 'A padded protective sleeve sized for a compact refreshable braille display.',
+    size: '11 by 4.5 by 1.8 inches',
+    color: 'Dark blue with a gray zipper',
+    materials: 'Water-resistant nylon and foam padding',
+    box: 'Sleeve and removable shoulder strap',
+    care: 'Spot clean and air dry. Do not machine wash.',
+    tactile: 'Large zipper pull and a textured strap adjustment buckle.',
+    soundVoice: 'No sound or voice features.',
+  },
+  {
+    id: 'talking-blood-pressure-monitor',
+    name: 'Talking Blood Pressure Monitor',
+    price: 58,
+    category: 'wellness',
+    description: 'An upper-arm monitor that announces readings and has one-button operation.',
+    size: 'Monitor is 5 by 4.1 by 2.2 inches; cuff fits 8.7 to 12.6 inch arms',
+    color: 'White monitor with a blue start button',
+    materials: 'ABS plastic and fabric cuff',
+    box: 'Monitor, cuff, four AA batteries, and storage pouch',
+    care: 'Wipe the monitor with a dry cloth. Do not wash the cuff.',
+    tactile: 'One large raised start button and a tactile cuff alignment mark.',
+    soundVoice: 'Announces systolic, diastolic, and pulse readings in English.',
+  },
+  {
+    id: 'tactile-cable-organizer',
+    name: 'Tactile Cable Organizer Set',
+    price: 9.99,
+    category: 'organization',
+    description: 'Reusable cable ties with distinct tactile textures for identifying cords.',
+    size: 'Ten ties, each 6 inches long',
+    color: 'Five black and five bright orange',
+    materials: 'Flexible silicone rubber',
+    box: 'Ten cable ties and a small storage pouch',
+    care: 'Wipe clean with mild soap and let dry.',
+    tactile: 'Each color has a different raised texture for touch identification.',
+    soundVoice: 'No sound or voice features.',
+  },
+  {
+    id: 'folding-white-cane-tip',
+    name: 'Folding White Cane Replacement Tip',
+    price: 11.49,
+    category: 'mobility',
+    description: 'A durable replacement tip designed for a standard folding mobility cane.',
+    size: 'Fits cane tubing from 0.43 to 0.5 inches',
+    color: 'Black rubber with a silver connector',
+    materials: 'High-density rubber and stainless steel connector',
+    box: 'One replacement tip and connector ring',
+    care: 'Inspect regularly and replace when worn or cracked.',
+    tactile: 'Rounded rolling surface with a firm edge for detecting changes in ground texture.',
+    soundVoice: 'Produces a light tapping sound on hard surfaces; no voice features.',
+  },
+  {
+    id: 'accessible-notification-band',
+    name: 'Accessible Notification Band',
+    price: 67,
+    category: 'wearable',
+    description: 'A wrist band that provides distinct vibration patterns for phone notifications.',
+    size: 'Adjustable for wrists from 5.5 to 8 inches',
+    color: 'Black band with a silver clasp',
+    materials: 'Silicone band and aluminum clasp',
+    box: 'Band, charging cable, and setup guide',
+    care: 'Wipe clean and keep the charging port covered.',
+    tactile: 'One raised pairing button and a textured clasp.',
+    soundVoice: 'Uses configurable vibration patterns and has no speaker.',
+  },
+]
+
+const catalogAdapter = {
+  async search(query, maxPrice) {
+    const normalizedQuery = typeof query === 'string' ? query.trim().toLowerCase() : ''
+    const hasPriceLimit = maxPrice !== undefined && maxPrice !== null
+    const priceLimit = hasPriceLimit ? Number(maxPrice) : Infinity
+
+    if (!normalizedQuery) {
+      throw new Error('Product search needs a query.')
+    }
+    if (hasPriceLimit && (!Number.isFinite(priceLimit) || priceLimit <= 0)) {
+      throw new Error('Maximum price must be a positive number.')
+    }
+
+    return products
+      .filter(
+        (product) =>
+          product.price <= priceLimit &&
+          `${product.name} ${product.category} ${product.description} ${product.materials} ${product.tactile} ${product.soundVoice}`
+            .toLowerCase()
+            .includes(normalizedQuery),
+      )
+      .slice(0, 3)
+  },
+
+  async get(id) {
+    const product = products.find((candidate) => candidate.id === id)
+    if (!product) {
+      throw new Error('That product was not found.')
+    }
+    return product
+  },
+}
+
+export function searchProducts(query, maxPrice) {
+  return catalogAdapter.search(query, maxPrice)
+}
+
+export function getProduct(id) {
+  return catalogAdapter.get(id)
+}
+
+export const describeProduct = getProduct
+export { products }

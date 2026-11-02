@@ -30,8 +30,11 @@ export const config = Object.freeze({
   useMockPaypal,
   paypalBaseUrl:
     process.env.PAYPAL_BASE_URL ?? 'https://api-m.sandbox.paypal.com',
+  transactionLogPath: process.env.TRANSACTION_LOG_PATH ?? '',
   maxPaymentUsd,
   geminiApiKey: process.env.GEMINI_API_KEY ?? '',
+  geminiModel: process.env.GEMINI_MODEL ?? 'gemini-2.0-flash',
   paypalClientId: process.env.PAYPAL_CLIENT_ID ?? '',
   paypalClientSecret: process.env.PAYPAL_CLIENT_SECRET ?? '',
+  paypalVaultId: process.env.PAYPAL_VAULT_ID ?? '',
 })
