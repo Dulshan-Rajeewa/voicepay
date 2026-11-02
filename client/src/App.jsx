@@ -160,8 +160,11 @@ function App() {
         setExpiryWarning('')
         const resultText =
           decision === 'confirm'
-            ? data.action?.status === 'completed'
+            ? data.action?.result?.status === 'SUCCESS' ||
+              data.action?.result?.status === 'COMPLETED'
               ? 'Your payment is complete.'
+              : data.action?.result?.status === 'PENDING'
+                ? 'PayPal accepted your payment. It is still processing, and no further approval is needed right now.'
               : data.action?.result?.message || 'Your action needs more PayPal approval.'
             : 'The pending action was cancelled.'
         announce(resultText)

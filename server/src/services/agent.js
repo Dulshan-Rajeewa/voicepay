@@ -5,6 +5,7 @@ import { findContact, listContacts } from './contacts.js'
 import {
   cancelPendingAction,
   createPendingAction,
+  getTransactionLog,
   logCancelledAction,
   toPublicPendingAction,
 } from './pending.js'
@@ -192,12 +193,50 @@ async function proposePurchase(args, sessionId) {
   return { pendingAction: toPublicPendingAction(action) }
 }
 
+async function getRecentPayments(limit) {
+  const paypalPayments = await getRecentTransactions(limit)
+  if (config.useMockPaypal) return paypalPayments
+
+  const localPayments = (await getTransactionLog())
+    .filter(
+      (entry) =>
+        entry.type === 'send_money' &&
+        entry.status === 'confirmed' &&
+        !String(entry.result?.batchId ?? '').startsWith('MOCK-'),
+    )
+    .map((entry) => ({
+      transaction_info: {
+        transaction_id: entry.result.batchId,
+        transaction_initiation_date: entry.confirmedAt,
+        transaction_status: entry.result.status,
+        transaction_amount: {
+          value: entry.details.amount,
+          currency_code: entry.details.currency,
+        },
+        transaction_subject: `Payment to ${entry.details.email}`,
+      },
+    }))
+
+  const transactions = [...localPayments, ...paypalPayments.transactions]
+    .sort((left, right) => {
+      const leftDate = left.transaction_info?.transaction_initiation_date ?? ''
+      const rightDate = right.transaction_info?.transaction_initiation_date ?? ''
+      return rightDate.localeCompare(leftDate)
+    })
+    .slice(0, limit)
+
+  return {
+    transactions,
+    totalItems: transactions.length,
+  }
+}
+
 async function executeTool(name, args, sessionId) {
   switch (name) {
     case 'get_balance':
       return getBalances()
     case 'get_recent_payments':
-      return getRecentTransactions(args.limit ?? 20)
+      return getRecentPayments(args.limit ?? 20)
     case 'list_contacts':
       return listContacts()
     case 'propose_payment':
