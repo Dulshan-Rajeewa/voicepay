@@ -1,5 +1,6 @@
 import { GoogleGenAI } from '@google/genai'
 import { config } from '../config.js'
+import { getSession, updateSession } from '../db/index.js'
 import { getProduct, searchProducts } from './catalog.js'
 import { findContact, listContacts } from './contacts.js'
 import {
@@ -128,7 +129,7 @@ function spokenPurchaseSummary(product, quantity, total) {
 }
 
 async function proposePayment(args, sessionId) {
-  const lookup = await findContact(args.contactName)
+  const lookup = await findContact(args.contactName, sessionId)
   if (!lookup.contact) {
     return lookup.ambiguous
       ? { clarification: `I found multiple contacts: ${lookup.matches.map((contact) => contact.name).join(', ')}. Which one do you mean?` }
@@ -140,7 +141,7 @@ async function proposePayment(args, sessionId) {
     return { clarification: `Please provide an amount from one cent to ${config.maxPaymentUsd.toFixed(2)} dollars.` }
   }
 
-  const action = createPendingAction({
+  const action = await createPendingAction({
     type: 'send_money',
     details: {
       email: lookup.contact.email,
@@ -152,6 +153,7 @@ async function proposePayment(args, sessionId) {
     sessionId,
   })
   sessionPendingActions.set(sessionId, action.id)
+  await updateSession(sessionId, { pendingActionId: action.id })
   return { pendingAction: toPublicPendingAction(action) }
 }
 
@@ -167,7 +169,7 @@ async function proposePurchase(args, sessionId) {
     return { clarification: `That purchase is over the ${config.maxPaymentUsd.toFixed(2)} dollar payment limit.` }
   }
 
-  const action = createPendingAction({
+  const action = await createPendingAction({
     type: 'purchase',
     details: {
       items: [{
@@ -190,19 +192,20 @@ async function proposePurchase(args, sessionId) {
     sessionId,
   })
   sessionPendingActions.set(sessionId, action.id)
+  await updateSession(sessionId, { pendingActionId: action.id })
   return { pendingAction: toPublicPendingAction(action) }
 }
 
-async function getRecentPayments(limit) {
-  await syncPendingPayouts()
+async function getRecentPayments(limit, userId) {
+  await syncPendingPayouts(userId)
   const paypalPayments = await getRecentTransactions(limit)
   if (config.useMockPaypal) return paypalPayments
 
-  const contacts = await listContacts()
+  const contacts = await listContacts(userId)
   const contactByEmail = new Map(
     contacts.map((contact) => [contact.email.trim().toLowerCase(), contact]),
   )
-  const localPayments = (await getTransactionLog())
+  const localPayments = (await getTransactionLog(userId))
     .filter(
       (entry) =>
         entry.type === 'send_money' &&
@@ -288,11 +291,11 @@ async function getRecentPayments(limit) {
 async function executeTool(name, args, sessionId) {
   switch (name) {
     case 'get_balance':
-      return getBalances()
+      return getBalances(sessionId)
     case 'get_recent_payments':
-      return getRecentPayments(args.limit ?? 20)
+      return getRecentPayments(args.limit ?? 20, sessionId)
     case 'list_contacts':
-      return listContacts()
+      return listContacts(sessionId)
     case 'propose_payment':
       return proposePayment(args, sessionId)
     case 'search_products':
@@ -302,13 +305,14 @@ async function executeTool(name, args, sessionId) {
     case 'propose_purchase':
       return proposePurchase(args, sessionId)
     case 'cancel_pending': {
-      const actionId = sessionPendingActions.get(sessionId)
+      const actionId = sessionPendingActions.get(sessionId) || (await getSession(sessionId)).pendingActionId
       if (!actionId) {
         return { clarification: 'There is no pending action to cancel.' }
       }
-      const action = cancelPendingAction(actionId, sessionId)
+      const action = await cancelPendingAction(actionId, sessionId)
       await logCancelledAction(action)
       sessionPendingActions.delete(sessionId)
+      await updateSession(sessionId, { pendingActionId: null })
       return { cancelled: true, action }
     }
     default:
@@ -316,9 +320,10 @@ async function executeTool(name, args, sessionId) {
   }
 }
 
-function getHistory(sessionId) {
+async function getHistory(sessionId) {
   if (!sessionHistories.has(sessionId)) {
-    sessionHistories.set(sessionId, [])
+    const stored = await getSession(sessionId)
+    sessionHistories.set(sessionId, Array.isArray(stored.history) ? stored.history : [])
   }
   return sessionHistories.get(sessionId)
 }
@@ -439,7 +444,7 @@ export async function chat({ sessionId, message }) {
     }
   }
 
-  const history = getHistory(sessionId)
+  const history = await getHistory(sessionId)
   history.push({ role: 'user', parts: [{ text: message.trim() }] })
   let response = await generateResponse(history)
 
@@ -490,6 +495,10 @@ export async function chat({ sessionId, message }) {
     history.push({ role: 'model', parts: [{ text: reply }] })
   }
 
+  await updateSession(sessionId, {
+    history: history.slice(-20),
+    pendingActionId: sessionPendingActions.get(sessionId) || null,
+  })
   return { reply, pendingAction }
 }
 

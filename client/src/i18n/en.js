@@ -10,6 +10,8 @@ export const en = {
   welcomeCopy: 'Talk or tap. I will show every answer on screen. Nothing is paid until you say yes.',
   emptyState: 'Your answers will appear here. Try a button above.',
   nothingPaid: 'Nothing is paid until you say yes.',
+  waking: 'Waking up, this can take up to a minute...',
+  serverReady: 'VoicePay is ready.',
   actions: {
     balance: { label: 'My money', message: 'Check my balance' },
     send: { label: 'Send money', message: 'I want to send money' },

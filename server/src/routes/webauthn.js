@@ -10,18 +10,12 @@ import {
   getPracticeOptions,
   verifyPractice,
 } from '../services/webauthn.js'
+import { sendError } from '../http.js'
 
 const router = Router()
 
 function getSessionId(request) {
   return request.get('x-session-id') || request.body?.sessionId
-}
-
-function sendError(response, error) {
-  response.status(error.statusCode || 400).json({
-    error: error.message || 'Device confirmation could not be completed.',
-    code: error.code,
-  })
 }
 
 router.get('/status', async (request, response) => {

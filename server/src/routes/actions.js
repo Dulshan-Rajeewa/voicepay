@@ -6,12 +6,9 @@ import {
   logCancelledAction,
   toPublicPendingAction,
 } from '../services/pending.js'
+import { sendError } from '../http.js'
 
 const router = Router()
-
-function sendError(response, error) {
-  response.status(400).json({ error: error.message, code: error.code })
-}
 
 function getSessionId(request) {
   return request.get('x-session-id') || request.body?.sessionId
@@ -23,6 +20,11 @@ router.post('/confirm', async (request, response) => {
 
   try {
     if (!sessionId) throw new Error('A session ID is required.')
+    if (typeof actionId !== 'string' || !(confirmation === true || ['confirm', 'yes', 'confirmed'].includes(String(confirmation).toLowerCase()))) {
+      const error = new Error('A valid confirmation is required.')
+      error.statusCode = 400
+      throw error
+    }
     const action = await confirmPendingAction(
       actionId,
       confirmation,
@@ -31,7 +33,7 @@ router.post('/confirm', async (request, response) => {
     )
     response.json({ action: toPublicPendingAction(action) })
   } catch (error) {
-    sendError(response, error)
+    sendError(response, error, 'The payment could not be confirmed.')
   }
 })
 
@@ -41,7 +43,7 @@ router.post('/cancel', async (request, response) => {
 
   try {
     if (!sessionId) throw new Error('A session ID is required.')
-    const action = cancelPendingAction(actionId, sessionId)
+    const action = await cancelPendingAction(actionId, sessionId)
     await logCancelledAction(action)
     response.json({ action: toPublicPendingAction(action) })
   } catch (error) {
@@ -49,7 +51,7 @@ router.post('/cancel', async (request, response) => {
   }
 })
 
-router.get('/actions/:id', (request, response) => {
+router.get('/actions/:id', async (request, response) => {
   const sessionId = getSessionId(request)
   if (!sessionId) {
     response.status(400).json({ error: 'A session ID is required.' })
@@ -58,7 +60,7 @@ router.get('/actions/:id', (request, response) => {
 
   let action
   try {
-    action = getPendingAction(request.params.id, sessionId)
+    action = await getPendingAction(request.params.id, sessionId)
   } catch {
     response.status(404).json({ error: 'Pending action was not found.' })
     return

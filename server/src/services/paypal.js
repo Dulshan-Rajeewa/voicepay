@@ -1,8 +1,6 @@
 import { randomUUID } from 'node:crypto'
-import { readFile, writeFile, mkdir } from 'node:fs/promises'
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { config } from '../config.js'
+import { listTransactions, updateTransactions } from '../db/index.js'
 
 const TOKEN_REFRESH_BUFFER_MS = 60_000
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -11,13 +9,6 @@ const MAX_TRANSACTION_LIMIT = 500
 
 let accessTokenCache = null
 const mockOrders = new Map()
-const transactionLogPath =
-  config.transactionLogPath ||
-  fileURLToPath(new URL('../../data/transactions.json', import.meta.url))
-const legacyTransactionLogPath = fileURLToPath(
-  new URL('../data/transactions.json', import.meta.url),
-)
-
 function assertAmount(amount, label = 'Amount') {
   const numericAmount = Number(amount)
 
@@ -101,32 +92,12 @@ async function paypalRequest(path, options = {}) {
   return payload
 }
 
-async function readLocalTransactions() {
-  try {
-    const contents = await readFile(transactionLogPath, 'utf8')
-    const entries = JSON.parse(contents)
-    return Array.isArray(entries) ? entries : []
-  } catch (error) {
-    if (error.code !== 'ENOENT') {
-      throw new Error('The local transaction log could not be read.')
-    }
-
-    if (transactionLogPath === legacyTransactionLogPath) return []
-
-    try {
-      const contents = await readFile(legacyTransactionLogPath, 'utf8')
-      const entries = JSON.parse(contents)
-      return Array.isArray(entries) ? entries : []
-    } catch (legacyError) {
-      if (legacyError.code === 'ENOENT') return []
-      throw new Error('The local transaction log could not be read.')
-    }
-  }
+async function readLocalTransactions(userId = 'default') {
+  return listTransactions(userId, 20)
 }
 
-async function writeLocalTransactions(entries) {
-  await mkdir(path.dirname(transactionLogPath), { recursive: true })
-  await writeFile(transactionLogPath, `${JSON.stringify(entries, null, 2)}\n`)
+async function writeLocalTransactions(userId, entries) {
+  await updateTransactions(userId, entries)
 }
 
 function mapPayoutStatus(status) {
@@ -217,10 +188,10 @@ function normalizeReportedTransaction(transaction) {
     return entry.status === 'PENDING' || entry.result?.status === 'PENDING'
   }
 
-export async function syncPendingPayouts() {
+export async function syncPendingPayouts(userId = 'default') {
   if (config.useMockPaypal) return []
 
-  const entries = await readLocalTransactions()
+  const entries = await readLocalTransactions(userId)
   let changed = false
   for (const entry of entries) {
     const payoutBatchId = entry.payoutBatchId || entry.result?.batchId
@@ -256,7 +227,7 @@ export async function syncPendingPayouts() {
     }
   }
 
-  if (changed) await writeLocalTransactions(entries)
+  if (changed) await writeLocalTransactions(userId, entries)
   return entries
   }
 
@@ -441,7 +412,7 @@ function transactionMatchesLocal(transaction, entry) {
     Math.abs(timestamp - localTimestamp) <= 24 * 60 * 60 * 1000
 }
 
-export async function getBalances() {
+export async function getBalances(userId = 'default') {
   if (config.useMockPaypal) {
     return {
       balances: [
@@ -451,11 +422,11 @@ export async function getBalances() {
     }
   }
 
-  await syncPendingPayouts()
+  await syncPendingPayouts(userId)
   const payload = await paypalRequest('/v1/reporting/balances')
   const allReportedTransactions = await getReportingTransactions()
   const reportedTransactions = allReportedTransactions.filter(isActiveOutgoing)
-  const localTransactions = await readLocalTransactions()
+  const localTransactions = await readLocalTransactions(userId)
   const localOutflows = localTransactions.filter((entry) => {
     const resultStatus = entry.result?.status || entry.result?.capture?.status
     const status = entry.status === 'confirmed' ? mapPayoutStatus(resultStatus) : entry.status
@@ -559,13 +530,17 @@ export async function createOrder({ items, total, currency }) {
       orderId,
       approvalLink: config.paypalVaultId
         ? null
-        : `https://www.sandbox.paypal.com/checkoutnow?token=${orderId}`,
+        : new URL(`/checkoutnow?token=${encodeURIComponent(orderId)}`, 'https://www.sandbox.paypal.com').toString(),
       paymentPath: config.paypalVaultId ? 'vaulted' : 'approval',
     }
   }
 
   const orderBody = {
     intent: 'CAPTURE',
+    application_context: {
+      return_url: new URL('/paypal/return', config.appBaseUrl).toString(),
+      cancel_url: new URL('/paypal/cancel', config.appBaseUrl).toString(),
+    },
     purchase_units: [
       {
         amount: {

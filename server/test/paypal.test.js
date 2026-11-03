@@ -5,6 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 process.env.USE_MOCK_PAYPAL = 'false'
+process.env.STORAGE_DRIVER = 'file'
 process.env.PAYPAL_CLIENT_ID = 'sandbox-client'
 process.env.PAYPAL_CLIENT_SECRET = 'sandbox-secret'
 process.env.TRANSACTION_LOG_PATH = path.join(

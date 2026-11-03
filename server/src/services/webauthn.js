@@ -1,7 +1,4 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 import {
   generateAuthenticationOptions,
   generateRegistrationOptions,
@@ -10,6 +7,14 @@ import {
 } from '@simplewebauthn/server'
 import { config, isDeviceAuthRequired } from '../config.js'
 import {
+  getAndConsumeChallenge,
+  getCredentials,
+  removeCredentials as removeStoredCredentials,
+  saveChallenge,
+  saveCredential,
+  updateCredentialCounter,
+} from '../db/index.js'
+import {
   getActionDetailsHash,
   getPendingAction,
   recordDeviceApproval,
@@ -17,17 +22,6 @@ import {
 
 const CHALLENGE_TTL_MS = 5 * 60 * 1000
 const USER_COOKIE = 'voicepay-user-id'
-const defaultCredentialStorePath =
-  config.credentialStorePath ||
-  fileURLToPath(new URL('../../data/credentials.json', import.meta.url))
-const registrationChallenges = new Map()
-const approvalChallenges = new Map()
-const practiceChallenges = new Map()
-
-function getCredentialStorePath() {
-  return process.env.CREDENTIAL_STORE_PATH || defaultCredentialStorePath
-}
-
 function toBase64Url(value) {
   return Buffer.from(value).toString('base64url')
 }
@@ -51,37 +45,12 @@ export function getOrCreateUserId(request, response) {
   if (existing) return existing
 
   const userId = randomUUID()
-  const secure = request.secure ? '; Secure' : ''
+  const secure = config.isProduction ? '; Secure' : ''
   response.append(
     'Set-Cookie',
     `${USER_COOKIE}=${userId}; Max-Age=31536000; Path=/; HttpOnly; SameSite=Lax${secure}`,
   )
   return userId
-}
-
-async function readCredentialStore() {
-  try {
-    const contents = await readFile(getCredentialStorePath(), 'utf8')
-    const store = JSON.parse(contents)
-    return store && typeof store === 'object' && !Array.isArray(store) ? store : {}
-  } catch (error) {
-    if (error.code === 'ENOENT') return {}
-    throw new Error('The device credential store could not be read.')
-  }
-}
-
-async function writeCredentialStore(store) {
-  try {
-    await mkdir(path.dirname(getCredentialStorePath()), { recursive: true })
-    await writeFile(getCredentialStorePath(), `${JSON.stringify(store, null, 2)}\n`)
-  } catch {
-    throw new Error('The device credential store could not be saved.')
-  }
-}
-
-async function getCredentials(userId) {
-  const store = await readCredentialStore()
-  return Array.isArray(store[userId]) ? store[userId] : []
 }
 
 function cleanError(error, fallback = 'Device confirmation could not be completed.') {
@@ -107,9 +76,11 @@ export async function getRegistrationOptions(userId) {
   const credentials = await getCredentials(userId)
   const challengeBytes = randomBytes(32)
   const challenge = toBase64Url(challengeBytes)
-  registrationChallenges.set(userId, {
+  await saveChallenge(`registration:${userId}`, {
+    userId,
+    type: 'registration',
     challenge,
-    expiresAt: Date.now() + CHALLENGE_TTL_MS,
+    expiresAt: new Date(Date.now() + CHALLENGE_TTL_MS).toISOString(),
   })
 
   return generateRegistrationOptions({
@@ -138,8 +109,7 @@ export async function verifyRegistration(
   deviceLabel = 'This device',
   verifyFn = verifyRegistrationResponse,
 ) {
-  const challengeEntry = registrationChallenges.get(userId)
-  registrationChallenges.delete(userId)
+  const challengeEntry = await getAndConsumeChallenge(`registration:${userId}`)
   if (!challengeEntry || challengeEntry.expiresAt <= Date.now()) {
     throw Object.assign(new Error('Registration has expired. Please start again.'), {
       code: 'WEBAUTHN_CHALLENGE_EXPIRED',
@@ -160,20 +130,14 @@ export async function verifyRegistration(
     }
 
     const credential = verification.registrationInfo.credential
-    const store = await readCredentialStore()
-    const current = Array.isArray(store[userId]) ? store[userId] : []
-    store[userId] = [
-      ...current.filter((item) => item.credentialID !== credential.id),
-      {
-        credentialID: credential.id,
-        publicKey: toBase64Url(credential.publicKey),
-        counter: credential.counter,
-        transports: credential.transports || response.response?.transports || [],
-        createdAt: new Date().toISOString(),
-        deviceLabel: String(deviceLabel).trim().slice(0, 80) || 'This device',
-      },
-    ]
-    await writeCredentialStore(store)
+    await saveCredential(userId, {
+      credentialID: credential.id,
+      publicKey: toBase64Url(credential.publicKey),
+      counter: credential.counter,
+      transports: credential.transports || response.response?.transports || [],
+      createdAt: new Date().toISOString(),
+      deviceLabel: String(deviceLabel).trim().slice(0, 80) || 'This device',
+    })
     return { registered: true }
   } catch (error) {
     throw cleanError(error, 'The device could not be registered. Please try again.')
@@ -186,14 +150,12 @@ export async function getStatus(userId) {
 }
 
 export async function removeCredentials(userId) {
-  const store = await readCredentialStore()
-  delete store[userId]
-  await writeCredentialStore(store)
+  await removeStoredCredentials(userId)
   return { registered: false }
 }
 
 export async function getApprovalOptions(actionId, sessionId, userId) {
-  const action = getPendingAction(actionId, sessionId)
+  const action = await getPendingAction(actionId, sessionId)
   if (!action) throw new Error('Pending action was not found.')
   if (action.status !== 'pending') throw new Error('This action can no longer be approved.')
 
@@ -209,13 +171,15 @@ export async function getApprovalOptions(actionId, sessionId, userId) {
   action.deviceApprovalNonce = nonce
   action.deviceApprovalChallenge = challenge
   action.deviceApprovalSessionId = sessionId
-  approvalChallenges.set(action.id, {
+  await saveChallenge(`approval:${action.id}`, {
+    type: 'approval',
+    userId,
     challenge,
     actionId: action.id,
     sessionId,
     userId,
     detailsHash: getActionDetailsHash(action),
-    expiresAt: Date.now() + CHALLENGE_TTL_MS,
+    expiresAt: new Date(Date.now() + CHALLENGE_TTL_MS).toISOString(),
   })
 
   return generateAuthenticationOptions({
@@ -236,11 +200,10 @@ export async function verifyApproval(
   response,
   verifyFn = verifyAuthenticationResponse,
 ) {
-  const pending = approvalChallenges.get(actionId)
-  approvalChallenges.delete(actionId)
-  const action = getPendingAction(actionId, sessionId)
+  const pending = await getAndConsumeChallenge(`approval:${actionId}`)
+  const action = await getPendingAction(actionId, sessionId)
 
-  if (!pending || pending.expiresAt <= Date.now()) {
+  if (!pending || new Date(pending.expiresAt).getTime() <= Date.now()) {
     throw Object.assign(new Error('Device approval has expired. Please try again.'), {
       code: 'WEBAUTHN_CHALLENGE_EXPIRED',
     })
@@ -283,15 +246,8 @@ export async function verifyApproval(
       })
     }
 
-    const store = await readCredentialStore()
-    const updated = (store[userId] || []).map((credential) =>
-      credential.credentialID === storedCredential.credentialID
-        ? { ...credential, counter: newCounter }
-        : credential,
-    )
-    store[userId] = updated
-    await writeCredentialStore(store)
-    recordDeviceApproval(action, userId, sessionId, pending.detailsHash)
+    await updateCredentialCounter(userId, storedCredential.credentialID, newCounter)
+    await recordDeviceApproval(action, userId, sessionId, pending.detailsHash)
     return { approved: true }
   } catch (error) {
     throw cleanError(error)
@@ -312,9 +268,11 @@ export async function getPracticeOptions(userId) {
     details: { amount: '0', recipient: 'practice', product: 'device-check' },
   }
   const challenge = createActionChallenge(practice, toBase64Url(randomBytes(32)))
-  practiceChallenges.set(userId, {
+  await saveChallenge(`practice:${userId}`, {
+    userId,
+    type: 'practice',
     challenge,
-    expiresAt: Date.now() + CHALLENGE_TTL_MS,
+    expiresAt: new Date(Date.now() + CHALLENGE_TTL_MS).toISOString(),
   })
 
   return generateAuthenticationOptions({
@@ -329,9 +287,8 @@ export async function getPracticeOptions(userId) {
 }
 
 export async function verifyPractice(userId, response, verifyFn = verifyAuthenticationResponse) {
-  const challenge = practiceChallenges.get(userId)
-  practiceChallenges.delete(userId)
-  if (!challenge || challenge.expiresAt <= Date.now()) {
+  const challenge = await getAndConsumeChallenge(`practice:${userId}`)
+  if (!challenge || new Date(challenge.expiresAt).getTime() <= Date.now()) {
     throw Object.assign(new Error('The practice check expired. Please try again.'), {
       code: 'WEBAUTHN_CHALLENGE_EXPIRED',
     })
@@ -369,13 +326,7 @@ export async function verifyPractice(userId, response, verifyFn = verifyAuthenti
       })
     }
 
-    const store = await readCredentialStore()
-    store[userId] = (store[userId] || []).map((credential) =>
-      credential.credentialID === storedCredential.credentialID
-        ? { ...credential, counter: newCounter }
-        : credential,
-    )
-    await writeCredentialStore(store)
+    await updateCredentialCounter(userId, storedCredential.credentialID, newCounter)
     return { approved: true, practice: true }
   } catch (error) {
     throw cleanError(error, 'The practice device check did not work. Please try again.')
@@ -383,12 +334,8 @@ export async function verifyPractice(userId, response, verifyFn = verifyAuthenti
 }
 
 export function clearWebAuthnState() {
-  registrationChallenges.clear()
-  approvalChallenges.clear()
-  practiceChallenges.clear()
 }
 
 export function expireApprovalForTest(actionId) {
-  const challenge = approvalChallenges.get(actionId)
-  if (challenge) challenge.expiresAt = Date.now() - 1
+  return getAndConsumeChallenge(`approval:${actionId}`)
 }

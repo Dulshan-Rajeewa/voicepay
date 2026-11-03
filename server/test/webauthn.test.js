@@ -5,6 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 process.env.USE_MOCK_PAYPAL = 'true'
+process.env.STORAGE_DRIVER = 'file'
 process.env.MAX_PAYMENT_USD = '100'
 process.env.REQUIRE_DEVICE_AUTH = 'true'
 process.env.CREDENTIAL_STORE_PATH = path.join(
@@ -81,7 +82,7 @@ afterEach(async () => {
 })
 
 test('refuses confirmation without device approval', async () => {
-  const action = createAction()
+  const action = await createAction()
   await assert.rejects(
     confirmPendingAction(action.id, true, async () => ({ status: 'SUCCESS' }), 'session-1'),
     (error) => error.code === 'NEEDS_DEVICE_APPROVAL',
@@ -115,7 +116,7 @@ test('keeps the registration challenge unchanged for browser verification', asyn
 
 test('rejects a wrong challenge', async () => {
   await setupCredential()
-  const action = createAction()
+  const action = await createAction()
   const options = await getApprovalOptions(action.id, 'session-1', 'test-user')
   await assert.rejects(
     verifyApproval(
@@ -136,7 +137,7 @@ test('rejects a wrong challenge', async () => {
 
 test('consumes an approval assertion only once', async () => {
   await setupCredential()
-  const action = createAction()
+  const action = await createAction()
   await getApprovalOptions(action.id, 'session-1', 'test-user')
   const verifier = async () => ({
     verified: true,
@@ -151,8 +152,8 @@ test('consumes an approval assertion only once', async () => {
 
 test('cannot use action A approval for action B', async () => {
   await setupCredential()
-  const actionA = createAction('20.00')
-  const actionB = createAction('21.00')
+  const actionA = await createAction('20.00')
+  const actionB = await createAction('21.00')
   await getApprovalOptions(actionA.id, 'session-1', 'test-user')
   await assert.rejects(
     verifyApproval(actionB.id, 'session-1', 'test-user', { id: 'credential-1' }, async () => ({
@@ -166,7 +167,7 @@ test('cannot use action A approval for action B', async () => {
 
 test('refuses an expired approval', async () => {
   await setupCredential()
-  const action = createAction()
+  const action = await createAction()
   await getApprovalOptions(action.id, 'session-1', 'test-user')
   expireApprovalForTest(action.id)
   await assert.rejects(
@@ -179,8 +180,8 @@ test('refuses an expired approval', async () => {
 })
 
 test('refuses a tampered amount after approval', async () => {
-  const action = createAction()
-  recordDeviceApproval(action, 'test-user', 'session-1', getActionDetailsHash(action))
+  const action = await createAction()
+  await recordDeviceApproval(action, 'test-user', 'session-1', getActionDetailsHash(action))
   action.details.amount = '90.00'
   await assert.rejects(
     confirmPendingAction(action.id, true, async () => ({ status: 'SUCCESS' }), 'session-1'),
@@ -190,7 +191,7 @@ test('refuses a tampered amount after approval', async () => {
 
 test('rejects an authenticator counter rollback', async () => {
   await setupCredential()
-  const action = createAction()
+  const action = await createAction()
   await getApprovalOptions(action.id, 'session-1', 'test-user')
   await assert.rejects(
     verifyApproval(action.id, 'session-1', 'test-user', { id: 'credential-1' }, async () => ({
@@ -203,7 +204,7 @@ test('rejects an authenticator counter rollback', async () => {
 
 test('allows the DEMO ONLY path when device auth is disabled', async () => {
   process.env.REQUIRE_DEVICE_AUTH = 'false'
-  const action = createAction()
+  const action = await createAction()
   let executed = false
   await confirmPendingAction(action.id, true, async () => {
     executed = true

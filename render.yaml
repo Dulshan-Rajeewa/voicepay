@@ -1,0 +1,45 @@
+services:
+  - type: web
+    name: voicepay
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: NODE_ENV
+        value: production
+      - key: APP_BASE_URL
+        sync: false
+      - key: ORIGIN
+        sync: false
+      - key: RP_ID
+        sync: false
+      - key: RP_NAME
+        value: VoicePay
+      - key: PAYPAL_BASE_URL
+        value: https://api-m.sandbox.paypal.com
+      - key: PAYPAL_CLIENT_ID
+        sync: false
+      - key: PAYPAL_CLIENT_SECRET
+        sync: false
+      - key: PAYPAL_VAULT_ID
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-2.0-flash
+      - key: MAX_PAYMENT_USD
+        value: "100"
+      - key: REQUIRE_DEVICE_AUTH
+        value: "true"
+      - key: ALLOW_DEMO_MODE
+        value: "false"
+      - key: STORAGE_DRIVER
+        value: firestore
+      - key: FIREBASE_SERVICE_ACCOUNT_B64
+        sync: false
+      - key: GOOGLE_APPLICATION_CREDENTIALS
+        sync: false

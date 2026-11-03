@@ -84,6 +84,32 @@ USE_MOCK_PAYPAL=true npm run dev
 
 The root `npm install` uses workspaces and installs the client, server, and root `concurrently` dependency. `npm run dev` starts Express on port `3001` and Vite on port `5173`; Vite proxies `/api` to Express.
 
+### Persistence drivers
+
+The default storage driver is the local file driver. It keeps runtime JSON files under `server/src/data/` and is the easiest option for hackathon judges:
+
+```env
+STORAGE_DRIVER=file
+USE_MOCK_PAYPAL=true
+```
+
+For Render or another persistent deployment, use Firebase Cloud Firestore on the free Spark plan:
+
+1. Create a Firebase project and enable Cloud Firestore.
+2. Create a service account in **Project settings → Service accounts**.
+3. Set `GOOGLE_APPLICATION_CREDENTIALS` to a local service-account JSON path, or base64-encode that JSON and set `FIREBASE_SERVICE_ACCOUNT_B64`.
+4. Set `STORAGE_DRIVER=firestore` and restart the server.
+5. Paste [firestore.rules](./firestore.rules) into the Firebase console. They deny all browser reads and writes; VoicePay uses only the server-side Admin SDK.
+6. Verify the connection:
+
+```powershell
+npm run check-db --prefix server
+```
+
+The check writes, reads, and deletes one temporary document. Users, contacts, credentials, transactions, pending actions, WebAuthn challenges, and session history are stored in Firestore. Money is stored as integer cents internally. Expiring data is cleaned lazily; an optional Firestore TTL policy can target `expiresAt`.
+
+Firestore usage is bounded for the Spark plan: transaction history reads are limited to 20, requests do not poll, and action/challenge reads are direct document lookups. Firebase service-account credentials remain server-only and are never sent to the client or logged.
+
 ### Environment variables
 
 Copy `server/.env.example` to `server/.env`. Never commit `server/.env`.
@@ -97,6 +123,9 @@ Copy `server/.env.example` to `server/.env`. Never commit `server/.env`.
 | `RP_NAME` | No | Name shown by the device passkey prompt; defaults to `VoicePay`. |
 | `REQUIRE_DEVICE_AUTH` | No | Defaults to `true`. Set `false` only for a local DEMO ONLY bypass. |
 | `CREDENTIAL_STORE_PATH` | No | Optional path for the runtime credential JSON file. |
+| `STORAGE_DRIVER` | No | `file` by default for local use; set `firestore` for Cloud Firestore. |
+| `FIREBASE_SERVICE_ACCOUNT_B64` | Firestore | Base64-encoded Firebase service-account JSON. Keep server-only. |
+| `GOOGLE_APPLICATION_CREDENTIALS` | Firestore | Server-only path to a Firebase service-account JSON file. |
 | `USE_MOCK_PAYPAL` | No | Set `true` for the deterministic demo; set `false` for PayPal Sandbox. |
 | `MAX_PAYMENT_USD` | No | Server-side maximum per payment; defaults to `100`. |
 | `GEMINI_API_KEY` | For AI | Gemini API key. Keep it only in `server/.env`. |
@@ -109,6 +138,39 @@ Copy `server/.env.example` to `server/.env`. Never commit `server/.env`.
 | `CONTACT_SARA_EMAIL` | No | Demo contact email; replace with a sandbox personal account. |
 | `CONTACT_ALEX_EMAIL` | No | Demo contact email; replace with a sandbox personal account. |
 | `TRANSACTION_LOG_PATH` | No | Optional override for the local JSON transaction log. |
+
+### Deploy to Render
+
+VoicePay deploys as one Render Web Service. The Node server serves the built React app
+and the API from the same origin, which keeps cookies and WebAuthn reliable.
+
+1. Push the repository to GitHub and create a **Blueprint** in Render using
+   [render.yaml](./render.yaml).
+2. Set `APP_BASE_URL` to the final HTTPS Render URL, for example
+   `https://voicepay-example.onrender.com`.
+3. Set `ORIGIN` to the same URL, and set `RP_ID` to its hostname
+   (`voicepay-example.onrender.com`).
+4. Add the PayPal Sandbox, Gemini, and Firebase secret values requested by the
+   Blueprint. Keep `REQUIRE_DEVICE_AUTH=true` and `ALLOW_DEMO_MODE=false`.
+5. Deploy. Render checks `/api/health`; a sleeping free service may take up to a
+   minute to wake, and the client announces this state and retries automatically.
+
+The production-style local command is:
+
+```bash
+npm install
+npm run build
+NODE_ENV=production PORT=3001 npm start
+```
+
+On Windows PowerShell, set the variables before `npm start`; the scripts use
+`cross-env` so the build and start commands themselves work on Windows too.
+Use `STORAGE_DRIVER=file` for a disposable local simulation or
+`STORAGE_DRIVER=firestore` with Firebase credentials for a persistent deployment.
+
+The complete template is [server/.env.example](./server/.env.example). The
+repository ignores `.env`, `serviceAccount*.json`, `node_modules`, and runtime
+JSON files under `server/src/data/`.
 
 ### Resetting demo data
 

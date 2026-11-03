@@ -95,7 +95,8 @@ function getMicrophoneDeniedMessage() {
 function StatusPill({ connectionStatus, onRetry }) {
   const labels = {
     connected: ['check', 'Connected'],
-    connecting: ['help', 'Connecting...'],
+    connecting: ['help', en.waking],
+    waking: ['help', en.waking],
     offline: ['warning', "Can't reach server"],
   }
   const [icon, label] = labels[connectionStatus] || labels.connecting
@@ -477,6 +478,7 @@ function App() {
   const ignoreClickRef = useRef(false)
   const pendingRef = useRef(null)
   const lastFocusedRef = useRef(null)
+  const wakeAnnouncedRef = useRef(false)
   const conversationRef = useRef(null)
   const sessionIdRef = useRef(getSessionId())
 
@@ -515,20 +517,31 @@ function App() {
   }, [addMessage, speak])
 
   const checkHealth = useCallback(async () => {
-    setConnectionStatus('connecting')
+    setConnectionStatus('waking')
+    if (!wakeAnnouncedRef.current) {
+      wakeAnnouncedRef.current = true
+      speak(en.waking)
+    }
     try {
       const response = await fetch('/api/health', { cache: 'no-store' })
       if (!response.ok) throw new Error('Health check failed')
       setConnectionStatus('connected')
+      if (wakeAnnouncedRef.current) speak(en.serverReady)
     } catch {
       setConnectionStatus('offline')
     }
-  }, [])
+  }, [speak])
 
   useEffect(() => {
     const timer = window.setTimeout(checkHealth, 0)
     return () => window.clearTimeout(timer)
   }, [checkHealth])
+
+  useEffect(() => {
+    if (connectionStatus !== 'offline') return undefined
+    const timer = window.setInterval(checkHealth, 5000)
+    return () => window.clearInterval(timer)
+  }, [connectionStatus, checkHealth])
 
   const refreshDeviceStatus = useCallback(async () => {
     try {
