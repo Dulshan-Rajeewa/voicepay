@@ -1,4 +1,7 @@
 import { randomUUID } from 'node:crypto'
+import { readFile, writeFile, mkdir } from 'node:fs/promises'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { config } from '../config.js'
 
 const TOKEN_REFRESH_BUFFER_MS = 60_000
@@ -8,6 +11,12 @@ const MAX_TRANSACTION_LIMIT = 500
 
 let accessTokenCache = null
 const mockOrders = new Map()
+const transactionLogPath =
+  config.transactionLogPath ||
+  fileURLToPath(new URL('../../data/transactions.json', import.meta.url))
+const legacyTransactionLogPath = fileURLToPath(
+  new URL('../data/transactions.json', import.meta.url),
+)
 
 function assertAmount(amount, label = 'Amount') {
   const numericAmount = Number(amount)
@@ -91,6 +100,143 @@ async function paypalRequest(path, options = {}) {
 
   return payload
 }
+
+async function readLocalTransactions() {
+    try {
+      const contents = await readFile(transactionLogPath, 'utf8')
+      const entries = JSON.parse(contents)
+      return Array.isArray(entries) ? entries : []
+    } catch (error) {
+      if (error.code !== 'ENOENT') {
+        throw new Error('The local transaction log could not be read.')
+      }
+
+      if (transactionLogPath === legacyTransactionLogPath) return []
+
+      try {
+        const contents = await readFile(legacyTransactionLogPath, 'utf8')
+        const entries = JSON.parse(contents)
+        return Array.isArray(entries) ? entries : []
+      } catch (legacyError) {
+        if (legacyError.code === 'ENOENT') return []
+        throw new Error('The local transaction log could not be read.')
+      }
+    }
+  }
+
+  async function writeLocalTransactions(entries) {
+    await mkdir(path.dirname(transactionLogPath), { recursive: true })
+    await writeFile(transactionLogPath, `${JSON.stringify(entries, null, 2)}\n`)
+  }
+
+  function mapPayoutStatus(status) {
+    const normalized = String(status || '').toUpperCase()
+    if (normalized === 'SUCCESS' || normalized === 'COMPLETED') return 'COMPLETED'
+    if (normalized === 'DENIED' || normalized === 'CANCELED' || normalized === 'UNCLAIMED') return 'DENIED'
+    if (normalized === 'FAILED') return 'FAILED'
+    return 'PENDING'
+  }
+
+  function mapReportingStatus(status) {
+    return {
+      S: 'COMPLETED',
+      P: 'PENDING',
+      D: 'DENIED',
+      F: 'FAILED',
+      V: 'DENIED',
+    }[String(status || '').toUpperCase()] || 'PENDING'
+  }
+
+  function getTransactionAmount(transaction) {
+    return Number(
+      transaction.transaction_info?.transaction_amount?.value ??
+        transaction.amount?.value ??
+        0,
+    )
+  }
+
+  function hasSystemFundingContext(transaction) {
+    const info = transaction.transaction_info || {}
+    const payer = JSON.stringify(transaction.payer_info || info.payer_info || '').toLowerCase()
+    const subject = String(info.transaction_subject || '').toLowerCase()
+    const merchant = transaction.payee_info || info.payee_info || info.merchant_info
+    const looksLikeFunding =
+      payer.includes('paypal') ||
+      subject.includes('initial balance') ||
+      subject.includes('funding') ||
+      subject.includes('deposit')
+
+    return looksLikeFunding && !merchant && !info.transaction_subject?.match(/payment to|purchase/i)
+  }
+
+  function hasUserPaymentContext(transaction) {
+    const info = transaction.transaction_info || {}
+    const subject = String(info.transaction_subject || '').toLowerCase()
+    const eventCode = String(info.transaction_event_code || '').toUpperCase()
+    const recipient = JSON.stringify(
+      transaction.payee_info ||
+        transaction.receiver_info ||
+        info.payee_info ||
+        info.receiver_info ||
+        '',
+    ).toLowerCase()
+
+    return (
+      /payment to|purchase|payout|sent to/.test(subject) ||
+      /payment to|purchase|payout|sent to/.test(recipient) ||
+      ['T0003', 'T0004', 'T0005', 'T0006'].includes(eventCode)
+    )
+  }
+
+  function normalizeReportedTransaction(transaction) {
+    const status = mapReportingStatus(transaction.transaction_info?.transaction_status)
+    return {
+      ...transaction,
+      transaction_info: {
+        ...transaction.transaction_info,
+        transaction_status: status,
+      },
+    }
+  }
+
+  function isSettledPayout(entry) {
+    return entry.status === 'PENDING' || entry.result?.status === 'PENDING'
+  }
+
+  export async function syncPendingPayouts() {
+    if (config.useMockPaypal) return []
+
+    const entries = await readLocalTransactions()
+    let changed = false
+    for (const entry of entries) {
+      const payoutBatchId = entry.payoutBatchId || entry.result?.batchId
+      if (!payoutBatchId || !isSettledPayout(entry)) continue
+
+      try {
+        const payload = await paypalRequest(
+          `/v1/payments/payouts/${encodeURIComponent(payoutBatchId)}`,
+        )
+        const itemStatuses = payload.items
+          ?.map((item) => item.transaction_status)
+          .filter(Boolean)
+        const status = mapPayoutStatus(
+          itemStatuses?.find((item) => mapPayoutStatus(item) !== 'PENDING') ||
+            payload.batch_header?.batch_status,
+        )
+        if (status === 'PENDING') continue
+
+        entry.payoutBatchId = payoutBatchId
+        entry.status = status
+        entry.result = { ...entry.result, batchId: payoutBatchId, status }
+        changed = true
+      } catch {
+        // A transient reporting failure must not hide the local payment record.
+      }
+    }
+
+    if (changed) await writeLocalTransactions(entries)
+    return entries
+  }
 
 export async function getAccessToken() {
   if (
@@ -216,10 +362,18 @@ export async function getRecentTransactions(limit = 20) {
     page: '1',
   })
   const payload = await paypalRequest(`/v1/reporting/transactions?${query}`)
+  const transactions = (payload.transaction_details ?? [])
+    .map(normalizeReportedTransaction)
+    .filter((transaction) => {
+      const status = transaction.transaction_info?.transaction_status
+      return (status === 'COMPLETED' || status === 'PENDING') &&
+        !hasSystemFundingContext(transaction) &&
+        hasUserPaymentContext(transaction)
+    })
 
   return {
-    transactions: payload.transaction_details ?? [],
-    totalItems: payload.total_items ?? payload.transaction_details?.length ?? 0,
+    transactions,
+    totalItems: transactions.length,
   }
 }
 
@@ -233,9 +387,51 @@ export async function getBalances() {
     }
   }
 
+  await syncPendingPayouts()
   const payload = await paypalRequest('/v1/reporting/balances')
+  const refreshTime = new Date(
+    payload.as_of_time ||
+      payload.last_refresh_time ||
+      payload.balances?.[0]?.as_of_time ||
+      payload.balances?.[0]?.last_refresh_time ||
+      0,
+  ).getTime()
+  const localTransactions = await readLocalTransactions()
+  const recentLocalOutflows = localTransactions
+    .filter((entry) => {
+      const resultStatus = entry.result?.status || entry.result?.capture?.status
+      const status = entry.status === 'confirmed'
+        ? mapPayoutStatus(resultStatus)
+        : entry.status
+      const timestamp = new Date(entry.confirmedAt || entry.createdAt).getTime()
+      return (
+        ((entry.type === 'send_money' && (status === 'COMPLETED' || status === 'PENDING')) ||
+          (entry.type === 'purchase' && status === 'COMPLETED')) &&
+        Number.isFinite(timestamp) &&
+        refreshTime > 0 &&
+        timestamp > refreshTime
+      )
+    })
+    .reduce((total, entry) => {
+      const amount = entry.details?.amount ?? entry.details?.total
+      return total + (Number.isFinite(Number(amount)) ? Number(amount) : 0)
+    }, 0)
 
-  return { balances: payload.balances ?? [] }
+  const balances = (payload.balances ?? []).map((balance) => {
+    const reported = Number(
+      balance.available ??
+        balance.available_balance?.value ??
+        balance.total_balance?.value ??
+        0,
+    )
+    if (balance.currency !== 'USD' || !Number.isFinite(reported)) return balance
+    return {
+      ...balance,
+      available: Math.max(0, reported - recentLocalOutflows).toFixed(2),
+    }
+  })
+
+  return { balances }
 }
 
 function normalizeItems(items) {

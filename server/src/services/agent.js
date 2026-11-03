@@ -9,7 +9,7 @@ import {
   logCancelledAction,
   toPublicPendingAction,
 } from './pending.js'
-import { getBalances, getRecentTransactions } from './paypal.js'
+import { getBalances, getRecentTransactions, syncPendingPayouts } from './paypal.js'
 
 const sessionHistories = new Map()
 const sessionPendingActions = new Map()
@@ -194,6 +194,7 @@ async function proposePurchase(args, sessionId) {
 }
 
 async function getRecentPayments(limit) {
+  await syncPendingPayouts()
   const paypalPayments = await getRecentTransactions(limit)
   if (config.useMockPaypal) return paypalPayments
 
@@ -201,14 +202,18 @@ async function getRecentPayments(limit) {
     .filter(
       (entry) =>
         entry.type === 'send_money' &&
-        entry.status === 'confirmed' &&
-        !String(entry.result?.batchId ?? '').startsWith('MOCK-'),
+        Boolean(entry.payoutBatchId || entry.result?.batchId) &&
+        ['confirmed', 'COMPLETED', 'PENDING'].includes(entry.status) &&
+        !['DENIED', 'FAILED', 'CANCELLED'].includes(entry.status) &&
+        !String(entry.payoutBatchId || entry.result?.batchId).startsWith('MOCK-'),
     )
     .map((entry) => ({
       transaction_info: {
         transaction_id: entry.result.batchId,
         transaction_initiation_date: entry.confirmedAt,
-        transaction_status: entry.result.status,
+        transaction_status: entry.status === 'confirmed'
+          ? (entry.result.status === 'PENDING' ? 'PENDING' : 'COMPLETED')
+          : entry.status,
         transaction_amount: {
           value: entry.details.amount,
           currency_code: entry.details.currency,
@@ -217,7 +222,30 @@ async function getRecentPayments(limit) {
       },
     }))
 
+  const seen = new Set()
+  const localKeys = localPayments.map((transaction) => transaction.transaction_info)
   const transactions = [...localPayments, ...paypalPayments.transactions]
+    .filter((transaction) => {
+      const info = transaction.transaction_info || {}
+      const idKey = info.transaction_id ? `id:${info.transaction_id}` : null
+      const amount = Number(info.transaction_amount?.value)
+      const timestamp = new Date(info.transaction_initiation_date || 0).getTime()
+      const subject = String(info.transaction_subject || '').toLowerCase()
+      const duplicateLocal = !localKeys.includes(info) && localKeys.some((localInfo) => {
+        const localAmount = Number(localInfo.transaction_amount?.value)
+        const localTimestamp = new Date(localInfo.transaction_initiation_date || 0).getTime()
+        const localSubject = String(localInfo.transaction_subject || '').toLowerCase()
+        return (
+          Number.isFinite(amount) &&
+          amount === localAmount &&
+          Math.abs(timestamp - localTimestamp) <= 10 * 60 * 1000 &&
+          subject === localSubject
+        )
+      })
+      if (idKey && seen.has(idKey) || duplicateLocal) return false
+      if (idKey) seen.add(idKey)
+      return true
+    })
     .sort((left, right) => {
       const leftDate = left.transaction_info?.transaction_initiation_date ?? ''
       const rightDate = right.transaction_info?.transaction_initiation_date ?? ''

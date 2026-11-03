@@ -322,7 +322,8 @@ export async function confirmPendingAction(
     await logTransaction({
       actionId: action.id,
       type: action.type,
-      status: 'confirmed',
+      status: result?.status === 'PENDING' ? 'PENDING' : 'confirmed',
+      payoutBatchId: result?.batchId,
       details: action.details,
       humanSummary: action.humanSummary,
       result,
