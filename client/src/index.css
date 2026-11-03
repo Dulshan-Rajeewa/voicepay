@@ -1,3 +1,5 @@
+@import './styles/tokens.css';
+
 html {
   font-size: 18px;
   color-scheme: light;

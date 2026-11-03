@@ -1,0 +1,46 @@
+export const en = {
+  languages: [{ value: 'en', label: 'English' }],
+  brand: 'VoicePay',
+  greeting: {
+    morning: 'Good morning!',
+    afternoon: 'Good afternoon!',
+    evening: 'Good evening!',
+  },
+  welcome: 'What would you like to do?',
+  welcomeCopy: 'Talk or tap. I will show every answer on screen. Nothing is paid until you say yes.',
+  emptyState: 'Your answers will appear here. Try a button above.',
+  nothingPaid: 'Nothing is paid until you say yes.',
+  actions: {
+    balance: { label: 'My money', message: 'Check my balance' },
+    send: { label: 'Send money', message: 'I want to send money' },
+    shop: { label: 'Shop', message: 'Help me shop for something' },
+    payments: { label: 'My payments', message: 'Show my recent payments' },
+    people: { label: 'My people', message: 'Show my contacts' },
+    help: { label: 'Help', message: 'What can you help me do?' },
+    repeat: { label: 'Repeat that', message: 'repeat' },
+  },
+  mic: {
+    ready: 'Hold and talk',
+    listening: "I'm listening...",
+    stop: 'Tap to stop',
+    thinking: 'One moment...',
+    speaking: 'VoicePay is speaking...',
+    send: 'Send',
+  },
+  conversation: 'Conversation',
+  lastSpoken: 'Last spoken',
+  quickActions: 'What would you like to do?',
+  listenAgain: 'Listen again',
+  copy: 'Copy',
+  settings: 'Settings',
+  closeSettings: 'Close settings',
+  language: 'Language',
+  confirm: 'Yes, send it',
+  cancel: 'No, cancel',
+  result: {
+    success: 'Done!',
+    problem: "That didn't work. Nothing was sent.",
+  },
+}
+
+export default en
