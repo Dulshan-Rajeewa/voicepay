@@ -198,6 +198,10 @@ async function getRecentPayments(limit) {
   const paypalPayments = await getRecentTransactions(limit)
   if (config.useMockPaypal) return paypalPayments
 
+  const contacts = await listContacts()
+  const contactByEmail = new Map(
+    contacts.map((contact) => [contact.email.trim().toLowerCase(), contact]),
+  )
   const localPayments = (await getTransactionLog())
     .filter(
       (entry) =>
@@ -218,13 +222,35 @@ async function getRecentPayments(limit) {
           value: entry.details.amount,
           currency_code: entry.details.currency,
         },
-        transaction_subject: `Payment to ${entry.details.email}`,
+        transaction_subject: `Payment to ${
+          contactByEmail.get(entry.details.email.toLowerCase())?.name ||
+          entry.details.email
+        }`,
+        recipientEmail: entry.details.email,
       },
     }))
 
+  const nameTransactions = (transactions) => transactions.map((transaction) => {
+    const info = transaction.transaction_info || {}
+    const email = info.receiver_email ||
+      info.receiver_info?.email_address ||
+      info.payee_info?.email_address ||
+      transaction.recipientEmail
+    const contact = email && contactByEmail.get(email.toLowerCase())
+    if (!contact) return transaction
+    return {
+      ...transaction,
+      transaction_info: {
+        ...info,
+        recipientName: contact.name,
+        transaction_subject: `Payment to ${contact.name}`,
+      },
+    }
+  })
+
   const seen = new Set()
   const localKeys = localPayments.map((transaction) => transaction.transaction_info)
-  const transactions = [...localPayments, ...paypalPayments.transactions]
+  const transactions = nameTransactions([...localPayments, ...paypalPayments.transactions])
     .filter((transaction) => {
       const info = transaction.transaction_info || {}
       const idKey = info.transaction_id ? `id:${info.transaction_id}` : null

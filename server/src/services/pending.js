@@ -324,6 +324,7 @@ export async function confirmPendingAction(
       type: action.type,
       status: result?.status === 'PENDING' ? 'PENDING' : 'confirmed',
       payoutBatchId: result?.batchId,
+      fee: result?.fee,
       details: action.details,
       humanSummary: action.humanSummary,
       result,

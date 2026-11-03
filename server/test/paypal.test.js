@@ -100,24 +100,122 @@ test('filters sandbox funding and denied reporting transactions', async () => {
   })), [{ id: 'PAYMENT', status: 'COMPLETED' }])
 })
 
-test('deducts recent local outflows from the live balance', async () => {
-  await writeFile(transactionPath, JSON.stringify([{
-    actionId: 'action-2',
+function payoutEntry(actionId, amount, batchId, confirmedAt = '2026-11-03T10:05:00Z') {
+  return {
+    actionId,
     type: 'send_money',
     status: 'COMPLETED',
-    details: { email: 'nimal@example.com', amount: '1.00', currency: 'USD' },
-    confirmedAt: '2026-11-03T10:05:00Z',
-    result: { batchId: 'PAYOUT-2', status: 'SUCCESS' },
-  }]))
+    payoutBatchId: batchId,
+    fee: '0.25',
+    details: { email: 'nimal@personal.example.com', amount, currency: 'USD' },
+    confirmedAt,
+    result: { batchId, status: 'COMPLETED', fee: '0.25' },
+  }
+}
+
+function balancePayload(available) {
+  return {
+    last_refresh_time: new Date().toISOString(),
+    balances: [{
+      currency: 'USD',
+      available_balance: { currency_code: 'USD', value: available },
+      available,
+      withheld: '0.00',
+    }],
+  }
+}
+
+function payoutLedger(batchId, amount, date) {
+  return {
+    transaction_info: {
+      transaction_id: batchId,
+      transaction_status: 'S',
+      transaction_amount: { value: amount, currency_code: 'USD' },
+      fee_amount: { value: '0.25', currency_code: 'USD' },
+      transaction_initiation_date: date,
+      transaction_subject: 'Payment to Nimal',
+    },
+  }
+}
+
+test('reconciles stale balance with completed payout fees', async () => {
+  await writeFile(transactionPath, JSON.stringify([
+    payoutEntry('action-100', '100.00', 'PAYOUT-100'),
+    payoutEntry('action-1', '1.00', 'PAYOUT-1'),
+  ]))
   mockFetch([
     { access_token: 'token', expires_in: 0 },
+    balancePayload('5000.00'),
+    { access_token: 'token', expires_in: 0 },
     {
-      as_of_time: '2026-11-03T10:00:00Z',
-      balances: [{ currency: 'USD', available: '5000.00', withheld: '0.00' }],
+      transaction_details: [{
+        transaction_info: {
+          transaction_id: 'FUNDING',
+          transaction_status: 'S',
+          transaction_amount: { value: '5000.00', currency_code: 'USD' },
+          transaction_subject: 'Initial balance',
+        },
+      }],
     },
   ])
 
   const result = await getBalances()
 
-  assert.equal(result.balances[0].available, '4999.00')
+  assert.equal(result.balances[0].available, '4898.50')
+  assert.equal(result.balances[0].available_balance.value, '4898.50')
+})
+
+test('does not double-subtract payouts already reflected by PayPal', async () => {
+  await writeFile(transactionPath, JSON.stringify([
+    payoutEntry('action-100', '100.00', 'PAYOUT-100'),
+    payoutEntry('action-1', '1.00', 'PAYOUT-1'),
+  ]))
+  mockFetch([
+    { access_token: 'token', expires_in: 0 },
+    balancePayload('4898.50'),
+    { access_token: 'token', expires_in: 0 },
+    {
+      transaction_details: [
+        {
+          transaction_info: {
+            transaction_id: 'FUNDING',
+            transaction_status: 'S',
+            transaction_amount: { value: '5000.00', currency_code: 'USD' },
+            transaction_subject: 'Initial balance',
+          },
+        },
+        payoutLedger('PAYOUT-100', '100.00', '2026-11-03T10:05:00Z'),
+        payoutLedger('PAYOUT-1', '1.00', '2026-11-03T10:06:00Z'),
+      ],
+    },
+  ])
+
+  const result = await getBalances()
+
+  assert.equal(result.balances[0].available, '4898.50')
+})
+
+test('subtracts a new local payout not yet in PayPal reporting', async () => {
+  await writeFile(transactionPath, JSON.stringify([
+    payoutEntry('action-10', '10.00', 'PAYOUT-10'),
+  ]))
+  mockFetch([
+    { access_token: 'token', expires_in: 0 },
+    balancePayload('4898.50'),
+    { access_token: 'token', expires_in: 0 },
+    {
+      transaction_details: [{
+        transaction_info: {
+          transaction_id: 'FUNDING',
+          transaction_status: 'S',
+          transaction_amount: { value: '5000.00', currency_code: 'USD' },
+          transaction_subject: 'Initial balance',
+        },
+      }],
+    },
+  ])
+
+  const result = await getBalances()
+
+  assert.equal(result.balances[0].available, '4888.25')
 })
