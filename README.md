@@ -172,6 +172,31 @@ The complete template is [server/.env.example](./server/.env.example). The
 repository ignores `.env`, `serviceAccount*.json`, `node_modules`, and runtime
 JSON files under `server/src/data/`.
 
+### Firebase credentials on Vercel
+
+Do not set `GOOGLE_APPLICATION_CREDENTIALS=./serviceAccount.json` on Vercel.
+Vercel does not contain that local file at runtime. Instead, encode the
+service-account JSON locally and add the result as the encrypted
+`FIREBASE_SERVICE_ACCOUNT_B64` environment variable:
+
+PowerShell:
+
+```powershell
+$bytes = [IO.File]::ReadAllBytes(".\serviceAccount.json")
+[Convert]::ToBase64String($bytes) | Set-Clipboard
+```
+
+Then add these Vercel variables:
+
+```env
+STORAGE_DRIVER=firestore
+FIREBASE_SERVICE_ACCOUNT_B64=<paste-the-base64-value>
+```
+
+Keep `GOOGLE_APPLICATION_CREDENTIALS` empty on Vercel. Never commit
+`serviceAccount.json`, paste its JSON into source control, or print the
+base64 value in logs.
+
 ### Resetting demo data
 
 Run this before recording or presenting:
