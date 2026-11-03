@@ -82,6 +82,31 @@ test('refuses confirmation without device approval', async () => {
   )
 })
 
+test('keeps the registration challenge unchanged for browser verification', async () => {
+  const options = await getRegistrationOptions('challenge-user')
+  let expectedChallenge
+  await verifyRegistration(
+    'challenge-user',
+    { id: 'registration', response: {} },
+    'Test laptop',
+    async ({ expectedChallenge: challenge }) => {
+      expectedChallenge = challenge
+      return {
+        verified: true,
+        registrationInfo: {
+          credential: {
+            id: 'challenge-credential',
+            publicKey: Uint8Array.from([1, 2, 3]),
+            counter: 1,
+            transports: ['internal'],
+          },
+        },
+      }
+    },
+  )
+  assert.equal(options.challenge, expectedChallenge)
+})
+
 test('rejects a wrong challenge', async () => {
   await setupCredential()
   const action = createAction()

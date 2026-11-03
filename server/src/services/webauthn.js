@@ -105,7 +105,8 @@ export function createActionChallenge(action, nonce = randomBytes(32)) {
 
 export async function getRegistrationOptions(userId) {
   const credentials = await getCredentials(userId)
-  const challenge = toBase64Url(randomBytes(32))
+  const challengeBytes = randomBytes(32)
+  const challenge = toBase64Url(challengeBytes)
   registrationChallenges.set(userId, {
     challenge,
     expiresAt: Date.now() + CHALLENGE_TTL_MS,
@@ -116,7 +117,7 @@ export async function getRegistrationOptions(userId) {
     rpID: config.rpId,
     userName: userId,
     userID: Buffer.from(userId),
-    challenge,
+    challenge: challengeBytes,
     userDisplayName: 'VoicePay user',
     attestationType: 'none',
     authenticatorSelection: {
@@ -219,7 +220,7 @@ export async function getApprovalOptions(actionId, sessionId, userId) {
 
   return generateAuthenticationOptions({
     rpID: config.rpId,
-    challenge,
+    challenge: fromBase64Url(challenge),
     allowCredentials: credentials.map((credential) => ({
       id: credential.credentialID,
       transports: credential.transports,
@@ -318,7 +319,7 @@ export async function getPracticeOptions(userId) {
 
   return generateAuthenticationOptions({
     rpID: config.rpId,
-    challenge,
+    challenge: fromBase64Url(challenge),
     allowCredentials: credentials.map((credential) => ({
       id: credential.credentialID,
       transports: credential.transports,
