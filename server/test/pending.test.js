@@ -15,6 +15,10 @@ process.env.TRANSACTION_LOG_PATH = path.join(
   os.tmpdir(),
   `voicepay-transactions-${process.pid}.json`,
 )
+process.env.PENDING_ACTION_STORE_PATH = path.join(
+  os.tmpdir(),
+  `voicepay-pending-actions-${process.pid}.json`,
+)
 
 const {
   cancelPendingAction,
@@ -33,6 +37,7 @@ const sendDetails = (amount = '20.00') => ({
 afterEach(async () => {
   clearPendingActions()
   await unlink(process.env.TRANSACTION_LOG_PATH).catch(() => {})
+  await unlink(process.env.PENDING_ACTION_STORE_PATH).catch(() => {})
   await unlink(process.env.CREDENTIAL_STORE_PATH).catch(() => {})
 })
 

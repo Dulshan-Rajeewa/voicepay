@@ -786,11 +786,18 @@ function App() {
       setDeviceApprovalStep('approved')
       await executeConfirmedAction()
     } catch (error) {
+      const actionMissing = error.message === 'Pending action was not found.'
       const text = error.name === 'NotAllowedError'
         ? 'The device check was cancelled or timed out. Nothing was sent. Press Check it’s you to try again.'
+        : actionMissing
+          ? 'This payment is no longer available after the server restarted. Nothing was sent. Please submit the payment request again.'
         : error.code === 'DEVICE_NOT_REGISTERED'
           ? 'This device is not set up yet. Open Settings and choose Set up this device.'
           : `The device check did not work. ${error.message || 'Please try again.'}`
+      if (actionMissing) {
+        setPendingAction(null)
+        setDeviceApprovalStep(null)
+      }
       setDeviceError(text)
       setDeviceApprovalStep('ready')
       setResultBanner({ kind: 'error', text })

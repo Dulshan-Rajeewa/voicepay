@@ -1,0 +1,7 @@
+{
+  "ignore": [
+    "data/**",
+    "src/data/transactions.json",
+    "src/data/credentials.json"
+  ]
+}

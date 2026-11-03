@@ -19,7 +19,7 @@ const CHALLENGE_TTL_MS = 5 * 60 * 1000
 const USER_COOKIE = 'voicepay-user-id'
 const defaultCredentialStorePath =
   config.credentialStorePath ||
-  fileURLToPath(new URL('../data/credentials.json', import.meta.url))
+  fileURLToPath(new URL('../../data/credentials.json', import.meta.url))
 const registrationChallenges = new Map()
 const approvalChallenges = new Map()
 const practiceChallenges = new Map()

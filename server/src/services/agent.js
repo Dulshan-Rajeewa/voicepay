@@ -295,7 +295,7 @@ const spokenAmounts = new Map([
 
 function getLocalPaymentRequest(message) {
   const match = message.trim().match(
-    /^(?:send|pay|give|transfer)\s+(.+?)\s+(?:dollars?|usd)\s+to\s+(.+)$/i,
+    /^(?:send|pay|give|transfer)\s+(.+?)(?:\s+(?:dollars?|usd))?\s+to\s+(.+)$/i,
   )
   if (!match) return null
 

@@ -47,6 +47,7 @@ export const config = Object.freeze({
   paypalBaseUrl:
     process.env.PAYPAL_BASE_URL ?? 'https://api-m.sandbox.paypal.com',
   transactionLogPath: process.env.TRANSACTION_LOG_PATH ?? '',
+  pendingActionStorePath: process.env.PENDING_ACTION_STORE_PATH ?? '',
   maxPaymentUsd,
   geminiApiKey: process.env.GEMINI_API_KEY ?? '',
   geminiModel: process.env.GEMINI_MODEL ?? 'gemini-3.5-flash',

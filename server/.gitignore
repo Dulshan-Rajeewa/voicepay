@@ -10,3 +10,6 @@ yarn-error.log*
 pnpm-debug.log*
 
 src/data/transactions.json
+data/credentials.json
+data/pending-actions.json
+data/transactions.json

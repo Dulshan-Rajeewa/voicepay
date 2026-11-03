@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { config, isDeviceAuthRequired } from '../config.js'
@@ -8,9 +9,46 @@ import { captureOrder, createOrder, sendPayout } from './paypal.js'
 const ACTION_TTL_MS = 5 * 60 * 1000
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const actions = new Map()
+const pendingActionStorePath =
+  config.pendingActionStorePath ||
+  fileURLToPath(new URL('../../data/pending-actions.json', import.meta.url))
 const transactionLogPath =
   config.transactionLogPath ||
-  fileURLToPath(new URL('../data/transactions.json', import.meta.url))
+  fileURLToPath(new URL('../../data/transactions.json', import.meta.url))
+const legacyTransactionLogPath = fileURLToPath(
+  new URL('../data/transactions.json', import.meta.url),
+)
+
+function loadActions() {
+  try {
+    const contents = readFileSync(pendingActionStorePath, 'utf8')
+    const storedActions = JSON.parse(contents)
+    if (!Array.isArray(storedActions)) return
+    for (const action of storedActions) {
+      if (action?.id && (action.status === 'pending' || action.status === 'processing')) {
+        if (action.status === 'processing') action.status = 'pending'
+        markExpired(action)
+        if (action.status === 'pending') actions.set(action.id, action)
+      }
+    }
+  } catch (error) {
+    if (error.code !== 'ENOENT') {
+      throw new Error('The pending action store could not be read.')
+    }
+  }
+}
+
+function saveActions() {
+  try {
+    mkdirSync(path.dirname(pendingActionStorePath), { recursive: true })
+    writeFileSync(
+      pendingActionStorePath,
+      `${JSON.stringify([...actions.values()], null, 2)}\n`,
+    )
+  } catch {
+    throw new Error('The pending action store could not be saved.')
+  }
+}
 
 function assertAmount(amount, label) {
   const numericAmount = Number(amount)
@@ -133,16 +171,28 @@ function markExpired(action) {
   }
 }
 
+loadActions()
+
 async function readTransactionLog() {
   try {
     const contents = await readFile(transactionLogPath, 'utf8')
     const entries = JSON.parse(contents)
     return Array.isArray(entries) ? entries : []
   } catch (error) {
-    if (error.code === 'ENOENT') {
-      return []
+    if (error.code !== 'ENOENT') {
+      throw new Error('The local transaction log could not be read.')
     }
-    throw new Error('The local transaction log could not be read.')
+
+    if (transactionLogPath === legacyTransactionLogPath) return []
+
+    try {
+      const contents = await readFile(legacyTransactionLogPath, 'utf8')
+      const entries = JSON.parse(contents)
+      return Array.isArray(entries) ? entries : []
+    } catch (legacyError) {
+      if (legacyError.code === 'ENOENT') return []
+      throw new Error('The local transaction log could not be read.')
+    }
   }
 }
 
@@ -186,6 +236,7 @@ export function createPendingAction({
   }
 
   actions.set(action.id, action)
+  saveActions()
   return action
 }
 
@@ -230,6 +281,7 @@ export function cancelPendingAction(actionId, sessionId) {
   }
 
   action.status = 'cancelled'
+  saveActions()
   return action
 }
 
@@ -260,11 +312,13 @@ export async function confirmPendingAction(
   requireDeviceApproval(action, sessionId)
   validateDetails(action)
   action.status = 'processing'
+  saveActions()
 
   try {
     const result = await execute(action)
     action.status = 'completed'
     action.result = result
+    saveActions()
     await logTransaction({
       actionId: action.id,
       type: action.type,
@@ -278,6 +332,7 @@ export async function confirmPendingAction(
     return action
   } catch (error) {
     action.status = 'failed'
+    saveActions()
     throw error
   }
 }

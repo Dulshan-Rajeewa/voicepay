@@ -11,6 +11,10 @@ process.env.CREDENTIAL_STORE_PATH = path.join(
   os.tmpdir(),
   `voicepay-credentials-webauthn-${process.pid}.json`,
 )
+process.env.PENDING_ACTION_STORE_PATH = path.join(
+  os.tmpdir(),
+  `voicepay-pending-actions-webauthn-${process.pid}.json`,
+)
 
 const {
   clearPendingActions,
@@ -29,6 +33,7 @@ const {
 } = await import('../src/services/webauthn.js')
 
 const credentialsPath = process.env.CREDENTIAL_STORE_PATH
+const pendingActionsPath = process.env.PENDING_ACTION_STORE_PATH
 
 const sendDetails = (amount = '20.00') => ({
   email: 'nimal@example.com',
@@ -72,6 +77,7 @@ afterEach(async () => {
   clearPendingActions()
   clearWebAuthnState()
   await unlink(credentialsPath).catch(() => {})
+  await unlink(pendingActionsPath).catch(() => {})
 })
 
 test('refuses confirmation without device approval', async () => {
