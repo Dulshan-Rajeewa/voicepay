@@ -6,6 +6,11 @@ import path from 'node:path'
 
 process.env.USE_MOCK_PAYPAL = 'true'
 process.env.MAX_PAYMENT_USD = '100'
+process.env.REQUIRE_DEVICE_AUTH = 'false'
+process.env.CREDENTIAL_STORE_PATH = path.join(
+  os.tmpdir(),
+  `voicepay-credentials-${process.pid}.json`,
+)
 process.env.TRANSACTION_LOG_PATH = path.join(
   os.tmpdir(),
   `voicepay-transactions-${process.pid}.json`,
@@ -28,6 +33,7 @@ const sendDetails = (amount = '20.00') => ({
 afterEach(async () => {
   clearPendingActions()
   await unlink(process.env.TRANSACTION_LOG_PATH).catch(() => {})
+  await unlink(process.env.CREDENTIAL_STORE_PATH).catch(() => {})
 })
 
 test('does not execute an expired action', async () => {

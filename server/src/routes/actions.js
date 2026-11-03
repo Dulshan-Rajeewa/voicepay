@@ -10,7 +10,7 @@ import {
 const router = Router()
 
 function sendError(response, error) {
-  response.status(400).json({ error: error.message })
+  response.status(400).json({ error: error.message, code: error.code })
 }
 
 function getSessionId(request) {

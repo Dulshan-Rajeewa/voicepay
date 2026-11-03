@@ -102,6 +102,15 @@ select { min-height: 3rem; max-width: 100%; padding: .5rem .75rem; border: 2px s
 .rate-control { flex-wrap: wrap; gap: .6rem; } .rate-control input { flex: 1; min-width: 8rem; } .rate-control output { width: 100%; font-weight: 800; }
 .small-button { min-width: 3rem; min-height: 3rem; border: 2px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); font-size: 1.5rem; font-weight: 900; }
 .preview-line, .help-section { padding: 1rem 0; margin: 0; } .help-section { border-top: 1px solid var(--border); } .help-section h3 { font-size: 1.1rem; }
+.device-status { margin-bottom: .75rem; font-weight: 800; } .device-actions, .device-check-step { display: grid; gap: .75rem; } .device-help, .device-error { color: var(--danger); font-weight: 750; } .device-check-step p { margin-bottom: 0; } .device-check-button { display: inline-flex; min-height: 5rem; align-items: center; justify-content: center; gap: .75rem; border: 0; border-radius: var(--radius-lg); background: var(--primary); color: var(--on-primary); font-size: 1.25rem; font-weight: 900; }
+.setup-layer { position: fixed; z-index: 40; inset: 0; display: grid; place-items: center; padding: 1rem; background: rgb(0 0 0 / .68); }
+.setup-dialog { width: min(100%, 42rem); max-height: calc(100dvh - 2rem); overflow: auto; padding: clamp(1.25rem, 5vw, 2.5rem); border: 2px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); color: var(--text); box-shadow: var(--shadow-soft); }
+.setup-progress { margin-bottom: .5rem; color: var(--primary); font-weight: 850; }
+.setup-dialog h2 { margin-bottom: .75rem; }
+.setup-dialog p { max-width: 70ch; }
+.setup-note { padding: .9rem 1rem; border-left: .4rem solid var(--warning); background: var(--warning-bg); font-weight: 750; }
+.setup-actions { display: grid; gap: .75rem; margin-top: 1.25rem; }
+.setup-navigation { display: flex; flex-wrap: wrap; gap: .75rem; margin-top: 1rem; border-top: 1px solid var(--border); padding-top: 1rem; }
 .speaking-indicator { position: fixed; z-index: 11; top: 5rem; right: 1rem; display: inline-flex; align-items: center; gap: .4rem; padding: .6rem .8rem; border: 2px solid var(--success); border-radius: 999px; background: var(--surface); color: var(--success); font-weight: 850; box-shadow: var(--shadow-soft); }
 .mobile-dialog-layer { padding: 1rem; } .pending-dialog { width: min(100%, 38rem); max-height: calc(100dvh - 2rem); overflow: auto; margin: 0 auto; }
 @keyframes pulse { 50% { opacity: .35; } }

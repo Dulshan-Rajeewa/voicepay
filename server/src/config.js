@@ -24,9 +24,25 @@ if (!Number.isFinite(maxPaymentUsd) || maxPaymentUsd <= 0) {
   throw new Error('MAX_PAYMENT_USD must be a positive number.')
 }
 
+const origins = (process.env.ORIGIN ?? process.env.CLIENT_ORIGIN ?? 'http://localhost:5173')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean)
+
+const requireDeviceAuth = process.env.REQUIRE_DEVICE_AUTH !== 'false'
+
+export function isDeviceAuthRequired() {
+  return process.env.REQUIRE_DEVICE_AUTH !== 'false'
+}
+
 export const config = Object.freeze({
   port: Number(process.env.PORT ?? '3001'),
   clientOrigin: process.env.CLIENT_ORIGIN ?? 'http://localhost:5173',
+  origins,
+  rpId: process.env.RP_ID ?? 'localhost',
+  rpName: process.env.RP_NAME ?? 'VoicePay',
+  requireDeviceAuth,
+  credentialStorePath: process.env.CREDENTIAL_STORE_PATH ?? '',
   useMockPaypal,
   paypalBaseUrl:
     process.env.PAYPAL_BASE_URL ?? 'https://api-m.sandbox.paypal.com',

@@ -25,6 +25,7 @@ The demo defaults to deterministic mock PayPal data so judges can run it without
 - Large Confirm and Cancel controls, spoken confirmation phrases, and expiry warnings.
 - Haptic patterns for listening, confirmation, success, and errors when vibration is available.
 - High contrast, semantic landmarks, focus management, reduced-motion support, and keyboard shortcuts.
+- Device-based confirmation with WebAuthn platform passkeys.
 
 ## Architecture
 
@@ -91,6 +92,11 @@ Copy `server/.env.example` to `server/.env`. Never commit `server/.env`.
 |---|---:|---|
 | `PORT` | No | Express port; defaults to `3001`. |
 | `CLIENT_ORIGIN` | No | CORS origin; defaults to `http://localhost:5173`. |
+| `ORIGIN` | No | Comma-separated WebAuthn origins; defaults to `http://localhost:5173`. |
+| `RP_ID` | No | WebAuthn relying-party ID; `localhost` for local testing or your phone tunnel hostname. |
+| `RP_NAME` | No | Name shown by the device passkey prompt; defaults to `VoicePay`. |
+| `REQUIRE_DEVICE_AUTH` | No | Defaults to `true`. Set `false` only for a local DEMO ONLY bypass. |
+| `CREDENTIAL_STORE_PATH` | No | Optional path for the runtime credential JSON file. |
 | `USE_MOCK_PAYPAL` | No | Set `true` for the deterministic demo; set `false` for PayPal Sandbox. |
 | `MAX_PAYMENT_USD` | No | Server-side maximum per payment; defaults to `100`. |
 | `GEMINI_API_KEY` | For AI | Gemini API key. Keep it only in `server/.env`. |
@@ -137,6 +143,73 @@ VoicePay is SANDBOX ONLY. Do not use production credentials or production endpoi
 8. Use `USE_MOCK_PAYPAL=false` only after all required values are present.
 
 Sandbox reporting may lag behind recent activity. The local transaction log keeps confirmed and cancelled VoicePay actions available even when PayPal Transaction Search has not updated.
+
+## Device confirmation (WebAuthn)
+
+VoicePay can require the user's own phone or computer to approve every money-moving pending action. The browser asks the platform authenticator for fingerprint, Face ID, Windows Hello, or the device lock-screen PIN/pattern. VoicePay never receives or stores biometric data. The server receives only the signed WebAuthn assertion and verifies it against the registered public key.
+
+On first use, VoicePay opens a voice-guided setup dialog. It explains the microphone permission box before the user chooses **Continue**, offers typing when microphone access is denied, then guides device setup and a harmless WebAuthn practice check. Browser and operating-system permission boxes cannot be answered by the web app; the user must choose Allow or complete the device prompt with their screen reader, keyboard, touch, or device voice control. Setup can be repeated from **Settings → Run setup again**, with separate **Fix microphone** and **Fix device check** actions.
+
+### What is stored
+
+- `server/src/data/credentials.json` is created at runtime and ignored by git.
+- Credentials are grouped by a random anonymous `voicepay-user-id` httpOnly, SameSite cookie.
+- Each entry stores the credential ID, public key, signature counter, transports, creation time, and a friendly device label.
+- The server stores short-lived challenges and action-bound approval metadata in memory. Assertions and biometric material are never stored.
+- The existing `X-Session-Id` still owns pending actions. The anonymous cookie only owns the device credentials.
+
+### Localhost setup
+
+Keep these values in `server/.env`:
+
+```env
+RP_ID=localhost
+RP_NAME=VoicePay
+ORIGIN=http://localhost:5173
+REQUIRE_DEVICE_AUTH=true
+```
+
+Run `npm run dev`, open `http://localhost:5173`, open Settings, and choose **Set up this device**. Use a platform authenticator available to the browser. Then create a payment proposal and choose **Yes, send it** followed by **Check it's you**.
+
+### Phone testing with ngrok
+
+Use an HTTPS tunnel so the phone sees a secure origin:
+
+```powershell
+ngrok http 5173
+```
+
+If ngrok gives `https://voicepay-example.ngrok-free.app`, set:
+
+```env
+RP_ID=voicepay-example.ngrok-free.app
+ORIGIN=https://voicepay-example.ngrok-free.app
+CLIENT_ORIGIN=https://voicepay-example.ngrok-free.app
+```
+
+Restart the server and Vite process, open the HTTPS URL on the phone, and set up the device there. The RP ID must be the hostname only; the origin includes the `https://` scheme and must match exactly.
+
+### Chrome DevTools virtual authenticator
+
+For a desktop judge without biometrics:
+
+1. Open Chrome DevTools.
+2. Open the Command Menu and choose **Show WebAuthn**.
+3. Add a virtual authenticator with CTAP2, resident keys, and user verification enabled.
+4. Open VoicePay, choose **Settings → Set up this device**, and complete the virtual prompt.
+5. Trigger a payment and choose **Check it's you**. Use the virtual authenticator controls to simulate the user verification.
+
+### Safety and demo bypass
+
+With `REQUIRE_DEVICE_AUTH=true`, `/api/confirm` refuses to move money until a recent, single-use device assertion approves the same unchanged action. Approval expires after two minutes, challenges expire after five minutes, and authenticator signature counters are checked for rollback.
+
+`REQUIRE_DEVICE_AUTH=false` keeps the older explicit-confirmation flow for a deterministic local presentation only. The server prints a loud startup warning:
+
+```text
+WARNING: REQUIRE_DEVICE_AUTH=false is DEMO ONLY. Never use this setting in production.
+```
+
+Never use the bypass for real accounts or production deployments.
 
 ## How PayPal is used
 

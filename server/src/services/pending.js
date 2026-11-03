@@ -1,8 +1,8 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { config } from '../config.js'
+import { config, isDeviceAuthRequired } from '../config.js'
 import { captureOrder, createOrder, sendPayout } from './paypal.js'
 
 const ACTION_TTL_MS = 5 * 60 * 1000
@@ -90,6 +90,43 @@ function validateDetails(action) {
   throw new Error('This pending action type is not supported.')
 }
 
+function stableStringify(value) {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(',')}}`
+  }
+  return JSON.stringify(value)
+}
+
+export function getActionDetailsHash(action) {
+  return createHash('sha256')
+    .update(stableStringify(action.details))
+    .digest('base64url')
+}
+
+export function recordDeviceApproval(action, userId, sessionId, detailsHash) {
+  action.deviceApproved = true
+  action.deviceApprovedAt = new Date().toISOString()
+  action.deviceApprovalDetailsHash = detailsHash
+  action.deviceApprovalUserId = userId
+  action.deviceApprovalSessionId = sessionId
+}
+
+function requireDeviceApproval(action, sessionId) {
+  if (!isDeviceAuthRequired()) return
+
+  const approvedAt = new Date(action.deviceApprovedAt || 0).getTime()
+  const approvedRecently = Number.isFinite(approvedAt) && Date.now() - approvedAt <= 2 * 60 * 1000
+  const unchanged = action.deviceApprovalDetailsHash === getActionDetailsHash(action)
+  const sameSession = action.deviceApprovalSessionId === sessionId
+
+  if (!action.deviceApproved || !approvedRecently || !unchanged || !sameSession) {
+    const error = new Error('Check it is you on this device before confirming the payment.')
+    error.code = 'NEEDS_DEVICE_APPROVAL'
+    throw error
+  }
+}
+
 function markExpired(action) {
   if (action.status === 'pending' && new Date(action.expiresAt).getTime() <= Date.now()) {
     action.status = 'expired'
@@ -165,7 +202,15 @@ export function getPendingAction(actionId, sessionId) {
 
 export function toPublicPendingAction(action) {
   if (!action) return null
-  const { sessionId: _sessionId, ...publicAction } = action
+  const {
+    sessionId: _sessionId,
+    deviceApprovalNonce: _deviceApprovalNonce,
+    deviceApprovalChallenge: _deviceApprovalChallenge,
+    deviceApprovalSessionId: _deviceApprovalSessionId,
+    deviceApprovalUserId: _deviceApprovalUserId,
+    deviceApprovalDetailsHash: _deviceApprovalDetailsHash,
+    ...publicAction
+  } = action
   return publicAction
 }
 
@@ -212,6 +257,7 @@ export async function confirmPendingAction(
     throw new Error('This action has already been processed.')
   }
 
+  requireDeviceApproval(action, sessionId)
   validateDetails(action)
   action.status = 'processing'
 

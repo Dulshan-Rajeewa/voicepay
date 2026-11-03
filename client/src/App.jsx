@@ -1,10 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import './App.css'
 import en from './i18n/en'
+import {
+  approveAction,
+  getDeviceStatus,
+  isSupported as isWebAuthnSupported,
+  registerDevice,
+  removeDevice,
+  practiceApproval,
+} from './services/webauthn'
 
 const SESSION_STORAGE_KEY = 'voicepay-session-id'
 const SPEECH_RATE_KEY = 'voicepay-speech-rate'
 const SETTINGS_KEY = 'voicepay-settings'
+const SETUP_KEY = 'voicepay-setup'
 const WARNING_WINDOW_MS = 60 * 1000
 
 const QUICK_ACTIONS = [
@@ -68,10 +77,19 @@ const getSessionId = () => {
 
 const readSettings = () => {
   try {
-    return { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') }
+    const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}')
+    const theme = ['light', 'dark', 'auto', 'high-contrast'].includes(saved.theme) ? saved.theme : 'light'
+    return { ...DEFAULT_SETTINGS, ...saved, theme }
   } catch {
-    return DEFAULT_SETTINGS
+    return { ...DEFAULT_SETTINGS, theme: 'light' }
   }
+}
+
+function getMicrophoneDeniedMessage() {
+  const userAgent = navigator.userAgent || ''
+  if (/iPhone|iPad|iPod/i.test(userAgent)) return en.setup.microphoneDeniedGuidance.iphone
+  if (/Android/i.test(userAgent)) return en.setup.microphoneDeniedGuidance.android
+  return en.setup.microphoneDeniedGuidance.desktop
 }
 
 function StatusPill({ connectionStatus, onRetry }) {
@@ -94,7 +112,22 @@ function StatusPill({ connectionStatus, onRetry }) {
   )
 }
 
-function SettingsDrawer({ settings, speechRate, onSettingsChange, onSpeechRateChange, onClose, speak }) {
+function SettingsDrawer({
+  settings,
+  speechRate,
+  onSettingsChange,
+  onSpeechRateChange,
+  onClose,
+  speak,
+  deviceStatus,
+  deviceSupported,
+  deviceBusy,
+  onRegisterDevice,
+  onRemoveDevice,
+  onRunSetup,
+  onFixMicrophone,
+  onFixDevice,
+}) {
   const drawerRef = useRef(null)
   const update = (key, value) => onSettingsChange({ ...settings, [key]: value })
 
@@ -181,6 +214,33 @@ function SettingsDrawer({ settings, speechRate, onSettingsChange, onSpeechRateCh
           </div>
         </fieldset>
 
+        <fieldset>
+          <legend>Secure confirmation</legend>
+          <p className="device-status">
+            {deviceStatus?.registered ? 'This device is set up.' : 'This device is not set up yet.'}
+          </p>
+          <div className="device-actions">
+            <button type="button" className="secondary-button" onClick={onRegisterDevice} disabled={deviceBusy || !deviceSupported}>
+              {deviceBusy ? 'Setting up...' : 'Set up this device'}
+            </button>
+            <button type="button" className="cancel-button" onClick={onRemoveDevice} disabled={deviceBusy || !deviceStatus?.registered}>
+              Remove this device
+            </button>
+          </div>
+          <div className="device-actions">
+            <button type="button" className="secondary-button" onClick={onFixDevice} disabled={deviceBusy}>Fix device check</button>
+          </div>
+          {!deviceSupported && <p className="device-help">This browser does not support device checks. Try a recent Chrome, Safari, or Edge browser.</p>}
+        </fieldset>
+
+        <fieldset>
+          <legend>VoicePay setup</legend>
+          <div className="device-actions">
+            <button type="button" className="secondary-button" onClick={onFixMicrophone}>Fix microphone</button>
+            <button type="button" className="secondary-button" onClick={onRunSetup}>Run setup again</button>
+          </div>
+        </fieldset>
+
         <p className="preview-line" aria-live="polite">
           Preview: {settings.voice ? 'replies will be read aloud' : 'replies will stay on screen'} at {rateLabel.toLowerCase()}.
         </p>
@@ -190,6 +250,79 @@ function SettingsDrawer({ settings, speechRate, onSettingsChange, onSpeechRateCh
         </section>
         <button type="button" className="primary-button full-width" onClick={() => speak('Settings saved.')}>Hear settings confirmation</button>
       </aside>
+    </div>
+  )
+}
+
+function SetupDialog({
+  step,
+  micStatus,
+  deviceSupported,
+  deviceStatus,
+  busy,
+  onContinue,
+  onDeviceSetup,
+  onPractice,
+  onSkip,
+  onBack,
+  onRepeat,
+  onFinish,
+  onUseTyping,
+}) {
+  const headingRef = useRef(null)
+  useEffect(() => {
+    headingRef.current?.focus()
+  }, [step])
+
+  const stepTitle = step === 1
+    ? en.setup.welcomeTitle
+    : step === 2
+      ? en.setup.microphoneTitle
+      : step === 3
+        ? en.setup.deviceTitle
+        : en.setup.practiceTitle
+  const stepText = step === 1
+    ? en.setup.welcome
+    : step === 2
+      ? micStatus === 'granted'
+        ? en.setup.microphoneReady
+        : micStatus === 'denied'
+          ? `${en.setup.microphoneDenied} ${getMicrophoneDeniedMessage()}`
+          : en.setup.microphonePermission
+      : step === 3
+        ? deviceSupported
+          ? en.setup.deviceIntro
+          : en.setup.deviceUnsupported
+        : en.setup.practiceIntro
+
+  return (
+    <div className="setup-layer" role="presentation">
+      <section className="setup-dialog" role="dialog" aria-modal="true" aria-labelledby="setup-heading" aria-describedby="setup-copy">
+        <p className="setup-progress">{en.setup.stepLabel(step)}</p>
+        <h2 id="setup-heading" ref={headingRef} tabIndex="-1">{stepTitle}</h2>
+        <p id="setup-copy">{stepText}</p>
+        {step === 2 && micStatus === 'prompt' && <p className="setup-note">{en.setup.microphoneIntro}</p>}
+        {step === 2 && ['denied', 'unsupported'].includes(micStatus) && <button type="button" className="secondary-button full-width" onClick={onUseTyping}>{en.setup.useTyping}</button>}
+        {step === 3 && !deviceSupported && <p className="setup-note">{en.setup.useTyping}</p>}
+        {step === 4 && <p className="setup-note">{en.setup.practicePrompt}</p>}
+
+        <div className="setup-actions">
+          {step === 1 && <button type="button" className="primary-button full-width" onClick={onContinue}>{en.setup.continue}</button>}
+          {step === 2 && micStatus !== 'granted' && <button type="button" className="primary-button full-width" onClick={onContinue} disabled={busy}>{en.setup.continue}</button>}
+          {step === 2 && micStatus === 'granted' && <button type="button" className="primary-button full-width" onClick={onContinue}>{en.setup.continue}</button>}
+          {step === 3 && !deviceStatus?.registered && <button type="button" className="primary-button full-width" onClick={onDeviceSetup} disabled={busy || !deviceSupported}>{busy ? 'Setting up...' : en.setup.setUpNow}</button>}
+          {step === 3 && deviceStatus?.registered && <button type="button" className="primary-button full-width" onClick={onContinue}>{en.setup.continue}</button>}
+          {step === 4 && <button type="button" className="primary-button full-width" onClick={onPractice} disabled={busy || !deviceStatus?.registered}>{busy ? 'Checking...' : en.setup.practice}</button>}
+          {step === 4 && deviceStatus?.registered && <button type="button" className="secondary-button full-width" onClick={onFinish}>{en.setup.done}</button>}
+        </div>
+
+        <div className="setup-navigation">
+          <button type="button" className="text-button" onClick={onRepeat}>{en.setup.repeat}</button>
+          {step > 1 && <button type="button" className="text-button" onClick={onBack}>{en.setup.back}</button>}
+          {step < 4 && <button type="button" className="text-button" onClick={onSkip}>{en.setup.skip}</button>}
+          {step === 4 && <button type="button" className="text-button" onClick={onSkip}>{en.setup.skip}</button>}
+        </div>
+      </section>
     </div>
   )
 }
@@ -256,7 +389,20 @@ function MessageBubble({ entry, onRepeat, onCopy }) {
   )
 }
 
-function PendingActionCard({ pendingAction, expiryText, onConfirm, onCancel, pendingRef, isSending, isDialog, onHear, onBuy }) {
+function PendingActionCard({
+  pendingAction,
+  expiryText,
+  onConfirm,
+  onCancel,
+  pendingRef,
+  isSending,
+  isDialog,
+  onHear,
+  onBuy,
+  deviceApprovalStep,
+  onDeviceApprove,
+  deviceError,
+}) {
   const amount = pendingAction.details?.amount || pendingAction.details?.total
   const items = pendingAction.details?.items
   const isPurchase = pendingAction.type === 'purchase'
@@ -277,10 +423,21 @@ function PendingActionCard({ pendingAction, expiryText, onConfirm, onCancel, pen
       <p className="pending-summary">{pendingAction.humanSummary}</p>
       {items?.map((item) => <ProductCard key={item.name} item={item} onHear={onHear} onBuy={onBuy} />)}
       <p className="expiry-line"><span aria-hidden="true">◷</span> {expiryText}</p>
-      <div className="pending-actions">
-        <button type="button" className="confirm-button" onClick={onConfirm} disabled={isSending}><Icon name="check" size={22} />{isPurchase ? 'Yes, buy it' : en.confirm}</button>
-        <button type="button" className="cancel-button" onClick={onCancel} disabled={isSending}><Icon name="x" size={22} />{en.cancel}</button>
-      </div>
+      {deviceApprovalStep === 'ready' ? (
+        <div className="device-check-step">
+          <p>Now press the big button to check it is you. Your device may ask for your fingerprint, face, or PIN.</p>
+          {deviceError && <p className="device-error" role="alert">{deviceError}</p>}
+          <button type="button" className="device-check-button" onClick={onDeviceApprove} disabled={isSending} autoFocus>
+            <Icon name="check" size={28} />Check it&apos;s you
+          </button>
+          <button type="button" className="cancel-button" onClick={onCancel} disabled={isSending}><Icon name="x" size={22} />{en.cancel}</button>
+        </div>
+      ) : (
+        <div className="pending-actions">
+          <button type="button" className="confirm-button" onClick={onConfirm} disabled={isSending}><Icon name="check" size={22} />{isPurchase ? 'Yes, buy it' : en.confirm}</button>
+          <button type="button" className="cancel-button" onClick={onCancel} disabled={isSending}><Icon name="x" size={22} />{en.cancel}</button>
+        </div>
+      )}
       <p className="confirmation-help">You can also say “confirm” or “cancel”. Press Escape to cancel.</p>
     </section>
   )
@@ -303,6 +460,15 @@ function App() {
   const [isThinking, setIsThinking] = useState(false)
   const [isSpeaking, setIsSpeaking] = useState(false)
   const [resultBanner, setResultBanner] = useState(null)
+  const [deviceStatus, setDeviceStatus] = useState({ registered: false, required: true })
+  const [deviceSupported, setDeviceSupported] = useState(false)
+  const [deviceBusy, setDeviceBusy] = useState(false)
+  const [deviceApprovalStep, setDeviceApprovalStep] = useState(null)
+  const [deviceError, setDeviceError] = useState('')
+  const [setupOpen, setSetupOpen] = useState(() => localStorage.getItem(SETUP_KEY) !== 'done')
+  const [setupStep, setSetupStep] = useState(() => localStorage.getItem(SETUP_KEY) === 'done' ? 1 : 1)
+  const [micStatus, setMicStatus] = useState(() => localStorage.getItem('voicepay-mic-status') || 'prompt')
+  const [setupBusy, setSetupBusy] = useState(false)
   const [isMobile, setIsMobile] = useState(() => window.matchMedia?.('(max-width: 899px)').matches ?? false)
   const recognitionRef = useRef(null)
   const isListeningRef = useRef(false)
@@ -364,6 +530,39 @@ function App() {
     return () => window.clearTimeout(timer)
   }, [checkHealth])
 
+  const refreshDeviceStatus = useCallback(async () => {
+    try {
+      const [status, supported] = await Promise.all([getDeviceStatus(), isWebAuthnSupported()])
+      setDeviceStatus(status)
+      localStorage.setItem('voicepay-device-registered', status.registered ? 'true' : 'false')
+      setDeviceSupported(supported)
+    } catch {
+      setDeviceSupported(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    refreshDeviceStatus()
+  }, [refreshDeviceStatus])
+
+  useEffect(() => {
+    let active = true
+    const checkMicrophone = async () => {
+      if (!navigator.permissions?.query) return
+      try {
+        const permission = await navigator.permissions.query({ name: 'microphone' })
+        if (active && permission.state !== 'prompt') {
+          setMicStatus(permission.state)
+          localStorage.setItem('voicepay-mic-status', permission.state)
+        }
+      } catch {
+        // Some browsers do not expose microphone permission state.
+      }
+    }
+    checkMicrophone()
+    return () => { active = false }
+  }, [])
+
   useEffect(() => {
     const mediaQuery = window.matchMedia('(max-width: 899px)')
     const updateViewport = () => setIsMobile(mediaQuery.matches)
@@ -377,6 +576,121 @@ function App() {
     document.documentElement.dataset.reduceMotion = settings.reduceMotion
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings))
   }, [settings])
+
+  const setupMessage = useCallback((text) => {
+    speak(text)
+    vibrate([60])
+  }, [speak, vibrate])
+
+  const initialSetupAnnouncedRef = useRef(false)
+  useEffect(() => {
+    if (setupOpen && !initialSetupAnnouncedRef.current) {
+      initialSetupAnnouncedRef.current = true
+      setupMessage(en.setup.welcome)
+    }
+  }, [setupMessage, setupOpen])
+
+  const beginSetup = useCallback((step = 1) => {
+    setSetupStep(step)
+    setSetupOpen(true)
+    setupMessage(step === 1 ? en.setup.welcome : step === 2 ? en.setup.microphonePermission : step === 3 ? en.setup.deviceIntro : en.setup.practiceIntro)
+  }, [setupMessage])
+
+  const finishSetup = useCallback((message = en.setup.practiceDone) => {
+    localStorage.setItem(SETUP_KEY, 'done')
+    setSetupOpen(false)
+    setupMessage(message)
+  }, [setupMessage])
+
+  const skipSetup = useCallback(() => {
+    finishSetup(en.setup.skipped)
+  }, [finishSetup])
+
+  const requestMicrophone = useCallback(async () => {
+    setSetupBusy(true)
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setMicStatus('unsupported')
+        localStorage.setItem('voicepay-mic-status', 'unsupported')
+        setupMessage(en.setup.microphoneUnsupported)
+        return 'unsupported'
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      stream.getTracks().forEach((track) => track.stop())
+      setMicStatus('granted')
+      localStorage.setItem('voicepay-mic-status', 'granted')
+      setupMessage(en.setup.microphoneReady)
+      return 'granted'
+    } catch (error) {
+      const status = error.name === 'NotAllowedError' ? 'denied' : 'prompt'
+      setMicStatus(status)
+      localStorage.setItem('voicepay-mic-status', status)
+      setupMessage(`${en.setup.microphoneDenied} ${getMicrophoneDeniedMessage()}`)
+      return status
+    } finally {
+      setSetupBusy(false)
+    }
+  }, [setupMessage])
+
+  const continueSetup = useCallback(async () => {
+    if (setupStep === 1) {
+      setSetupStep(2)
+      setupMessage(en.setup.microphonePermission)
+      return
+    }
+    if (setupStep === 2) {
+      const status = micStatus === 'granted' ? 'granted' : await requestMicrophone()
+      if (status === 'granted' || status === 'unsupported' || status === 'denied') {
+        setSetupStep(3)
+        setupMessage(en.setup.deviceIntro)
+      }
+      return
+    }
+    if (setupStep === 3 && deviceStatus?.registered) {
+      setSetupStep(4)
+      setupMessage(en.setup.practiceIntro)
+    }
+  }, [deviceStatus.registered, micStatus, requestMicrophone, setupMessage, setupStep])
+
+  const useTypingInstead = useCallback(() => {
+    setMicStatus('skipped')
+    localStorage.setItem('voicepay-mic-status', 'skipped')
+    setSetupStep(3)
+    setupMessage(en.setup.deviceIntro)
+  }, [setupMessage])
+
+  const guidedDeviceSetup = useCallback(async () => {
+    if (deviceBusy || !deviceSupported) {
+      setupMessage(en.setup.deviceUnsupported)
+      return
+    }
+    setSetupBusy(true)
+    try {
+      await registerDevice()
+      await refreshDeviceStatus()
+      localStorage.setItem('voicepay-device-registered', 'true')
+      setupMessage(`${en.setup.deviceReady} ${en.setup.practiceIntro}`)
+      setSetupStep(4)
+    } catch (error) {
+      const text = error.name === 'NotAllowedError' ? en.setup.deviceCancelled : `This device could not be set up. ${error.message || 'Please try again.'}`
+      setupMessage(text)
+    } finally {
+      setSetupBusy(false)
+    }
+  }, [deviceBusy, deviceSupported, refreshDeviceStatus, setupMessage])
+
+  const practiceSetup = useCallback(async () => {
+    setSetupBusy(true)
+    try {
+      await practiceApproval()
+      setupMessage(en.setup.practiceDone)
+      finishSetup()
+    } catch (error) {
+      setupMessage(error.name === 'NotAllowedError' ? en.setup.practiceCancelled : `${en.setup.practiceError} ${error.message || ''}`.trim())
+    } finally {
+      setSetupBusy(false)
+    }
+  }, [finishSetup, setupMessage])
 
   const sendMessage = useCallback(async (text) => {
     const trimmed = text.trim()
@@ -403,6 +717,9 @@ function App() {
       if (data.pendingAction) {
         lastFocusedRef.current = document.activeElement
         vibrate([120, 80, 120])
+        if (deviceStatus.required && !deviceStatus.registered) {
+          beginSetup(3)
+        }
       }
       setConnectionStatus('connected')
       setRequestStatus('Ready')
@@ -415,38 +732,36 @@ function App() {
       setIsThinking(false)
       setIsSending(false)
     }
-  }, [addMessage, announce, isSending, vibrate])
+  }, [addMessage, announce, beginSetup, deviceStatus.registered, deviceStatus.required, isSending, vibrate])
 
-  const handlePending = useCallback(async (decision) => {
+  const executeConfirmedAction = useCallback(async () => {
     if (!pendingAction || isSending) return
     setIsSending(true)
-    setRequestStatus(decision === 'confirm' ? 'Confirming' : 'Cancelling')
+    setRequestStatus('Confirming')
     try {
-      const endpoint = decision === 'confirm' ? '/api/confirm' : '/api/cancel'
-      const body = decision === 'confirm' ? { actionId: pendingAction.id, confirmation: true } : { actionId: pendingAction.id }
-      const response = await fetch(endpoint, {
+      const response = await fetch('/api/confirm', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Session-Id': sessionIdRef.current },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ actionId: pendingAction.id, confirmation: true }),
       })
       const data = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(data.error || 'The action could not be completed.')
       setPendingAction(null)
       setExpiryWarning('')
+      setDeviceApprovalStep(null)
+      setDeviceError('')
       const actionAmount = pendingAction.details?.amount || pendingAction.details?.total
       const actionName = pendingAction.details?.contactName || pendingAction.details?.name
-      const resultText = decision === 'confirm'
-        ? data.action?.result?.status === 'SUCCESS' || data.action?.result?.status === 'COMPLETED'
-          ? pendingAction.type === 'purchase'
-            ? 'Done! Your purchase is complete.'
-            : `Done! ${actionAmount ? `${Number(actionAmount).toFixed(2)} dollars` : 'Your payment'}${actionName ? ` sent to ${actionName}` : ' sent'}.`
-          : data.action?.result?.status === 'PENDING'
-            ? 'PayPal accepted your payment. It is still processing, and no further approval is needed right now.'
-            : data.action?.result?.message || 'Your action needs more PayPal approval.'
-        : 'Okay. Nothing was sent.'
-      setResultBanner({ kind: decision === 'confirm' ? 'success' : 'info', text: resultText })
+      const resultText = data.action?.result?.status === 'SUCCESS' || data.action?.result?.status === 'COMPLETED'
+        ? pendingAction.type === 'purchase'
+          ? 'Done! Your purchase is complete.'
+          : `Done! ${actionAmount ? `${Number(actionAmount).toFixed(2)} dollars` : 'Your payment'}${actionName ? ` sent to ${actionName}` : ' sent'}.`
+        : data.action?.result?.status === 'PENDING'
+          ? 'PayPal accepted your payment. It is still processing, and no further approval is needed right now.'
+          : data.action?.result?.message || 'Your action needs more PayPal approval.'
+      setResultBanner({ kind: 'success', text: resultText })
       announce(resultText)
-      vibrate(decision === 'confirm' ? [180, 80, 180] : [60])
+      vibrate([180, 80, 180])
       setRequestStatus('Ready')
       window.setTimeout(() => lastFocusedRef.current?.focus?.(), 0)
     } catch (error) {
@@ -459,6 +774,80 @@ function App() {
       setIsSending(false)
     }
   }, [announce, isSending, pendingAction, vibrate])
+
+  const handleDeviceApprove = useCallback(async () => {
+    if (!pendingAction || isSending) return
+    setDeviceBusy(true)
+    setIsSending(true)
+    setDeviceError('')
+    setRequestStatus("Checking it's you")
+    try {
+      await approveAction(pendingAction.id, sessionIdRef.current)
+      setDeviceApprovalStep('approved')
+      await executeConfirmedAction()
+    } catch (error) {
+      const text = error.name === 'NotAllowedError'
+        ? 'The device check was cancelled or timed out. Nothing was sent. Press Check it’s you to try again.'
+        : error.code === 'DEVICE_NOT_REGISTERED'
+          ? 'This device is not set up yet. Open Settings and choose Set up this device.'
+          : `The device check did not work. ${error.message || 'Please try again.'}`
+      setDeviceError(text)
+      setDeviceApprovalStep('ready')
+      setResultBanner({ kind: 'error', text })
+      announce(text, 'error')
+      vibrate([80, 60, 80])
+      setRequestStatus('Error')
+      setIsSending(false)
+    } finally {
+      setDeviceBusy(false)
+    }
+  }, [announce, executeConfirmedAction, isSending, pendingAction, vibrate])
+
+  const handlePending = useCallback(async (decision) => {
+    if (!pendingAction || isSending) return
+    if (decision === 'confirm' && deviceStatus.required) {
+      setDeviceError('')
+      setDeviceApprovalStep('ready')
+      setRequestStatus("Needs device check")
+      announce('Now press the big button, or the Space bar, to check it is you. Your phone will ask for your fingerprint, face, or PIN.')
+      vibrate([120, 80, 120])
+      return
+    }
+
+    if (decision === 'confirm') {
+      await executeConfirmedAction()
+      return
+    }
+
+    setIsSending(true)
+    setRequestStatus('Cancelling')
+    try {
+      const response = await fetch('/api/cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Session-Id': sessionIdRef.current },
+        body: JSON.stringify({ actionId: pendingAction.id }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data.error || 'The action could not be cancelled.')
+      setPendingAction(null)
+      setDeviceApprovalStep(null)
+      setExpiryWarning('')
+      const resultText = 'Okay. Nothing was sent.'
+      setResultBanner({ kind: 'info', text: resultText })
+      announce(resultText)
+      vibrate([60])
+      setRequestStatus('Ready')
+      window.setTimeout(() => lastFocusedRef.current?.focus?.(), 0)
+    } catch (error) {
+      const text = `Sorry. ${error.message || 'That action could not be cancelled.'}`
+      setResultBanner({ kind: 'error', text })
+      announce(text, 'error')
+      vibrate([80, 60, 80])
+      setRequestStatus('Error')
+    } finally {
+      setIsSending(false)
+    }
+  }, [announce, deviceStatus.required, executeConfirmedAction, isSending, pendingAction, vibrate])
 
   const finishListening = useCallback(() => {
     stoppingRecognitionRef.current = true
@@ -492,6 +881,13 @@ function App() {
     recognition.onresult = (event) => {
       stoppingRecognitionRef.current = false
       const transcript = event.results[0][0].transcript
+      const command = transcript.trim().toLowerCase()
+      if (setupOpen && ['repeat', 'skip', 'back'].includes(command)) {
+        if (command === 'repeat') setupMessage(setupStep === 1 ? en.setup.welcome : setupStep === 2 ? en.setup.microphonePermission : setupStep === 3 ? en.setup.deviceIntro : en.setup.practiceIntro)
+        if (command === 'skip') skipSetup()
+        if (command === 'back' && setupStep > 1) setSetupStep((current) => current - 1)
+        return
+      }
       setMessage(transcript)
       if (/^(repeat|repeat last answer)$/i.test(transcript.trim())) {
         speak(lastSpoken || 'There is no previous answer to repeat.')
@@ -523,7 +919,7 @@ function App() {
       setRequestStatus('Error')
       announce(error.message || 'Voice input could not be started. Please try again.', 'error')
     }
-  }, [announce, handlePending, lastSpoken, pendingAction, sendMessage, speak, vibrate])
+  }, [announce, handlePending, lastSpoken, pendingAction, sendMessage, setupMessage, setupOpen, setupStep, skipSetup, speak, vibrate])
 
   const handleSpeakClick = useCallback(() => {
     if (ignoreClickRef.current) {
@@ -565,6 +961,19 @@ function App() {
     const handleKeyDown = (event) => {
       const target = event.target
       const typing = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement
+      if (setupOpen && !typing) {
+        if (event.key.toLowerCase() === 'r') {
+          event.preventDefault()
+          setupMessage(setupStep === 1 ? en.setup.welcome : setupStep === 2 ? en.setup.microphonePermission : setupStep === 3 ? en.setup.deviceIntro : en.setup.practiceIntro)
+        } else if (event.key.toLowerCase() === 's') {
+          event.preventDefault()
+          skipSetup()
+        } else if (event.key.toLowerCase() === 'b' && setupStep > 1) {
+          event.preventDefault()
+          setSetupStep((current) => current - 1)
+        }
+        return
+      }
       if (event.key === 'Escape' && pendingAction) {
         event.preventDefault()
         handlePending('cancel')
@@ -590,7 +999,7 @@ function App() {
       document.removeEventListener('keydown', handleKeyDown)
       document.removeEventListener('keyup', handleKeyUp)
     }
-  }, [finishListening, handlePending, lastSpoken, pendingAction, speak, startListening])
+  }, [finishListening, handlePending, lastSpoken, pendingAction, setupMessage, setupOpen, setupStep, skipSetup, speak, startListening])
 
   useEffect(() => {
     if (!pendingAction) return undefined
@@ -668,6 +1077,33 @@ function App() {
     return () => document.removeEventListener('keydown', trapFocus)
   }, [showSettings])
 
+  useEffect(() => {
+    if (!setupOpen) return undefined
+    const dialog = document.querySelector('.setup-dialog')
+    const focusable = () => [...dialog.querySelectorAll('button, input, select, [tabindex]:not([tabindex="-1"])')].filter((element) => !element.disabled)
+    const trapFocus = (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        skipSetup()
+        return
+      }
+      if (event.key !== 'Tab') return
+      const elements = focusable()
+      if (!elements.length) return
+      const first = elements[0]
+      const last = elements[elements.length - 1]
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+    document.addEventListener('keydown', trapFocus)
+    return () => document.removeEventListener('keydown', trapFocus)
+  }, [setupOpen, skipSetup])
+
   const updateSpeechRate = (value) => {
     setSpeechRate(value)
     localStorage.setItem(SPEECH_RATE_KEY, String(value))
@@ -684,6 +1120,44 @@ function App() {
   const handleQuickAction = (value) => {
     if (value === 'repeat') speak(lastSpoken || 'There is no previous answer to repeat.')
     else sendMessage(value)
+  }
+
+  const setupDevice = async () => {
+    if (deviceBusy) return
+    if (!deviceSupported) {
+      announce('This browser cannot use secure device confirmation. Try a recent Chrome, Safari, or Edge browser.', 'error')
+      return
+    }
+    setDeviceBusy(true)
+    try {
+      await registerDevice()
+      await refreshDeviceStatus()
+      announce('This device is ready for secure confirmation.')
+      vibrate([120, 80, 120])
+    } catch (error) {
+      const text = error.name === 'NotAllowedError'
+        ? 'Device setup was cancelled. Nothing changed. Press Set up this device to try again.'
+        : `This device could not be set up. ${error.message || 'Please try again.'}`
+      announce(text, 'error')
+      vibrate([80, 60, 80])
+    } finally {
+      setDeviceBusy(false)
+    }
+  }
+
+  const forgetDevice = async () => {
+    if (deviceBusy || !deviceStatus.registered) return
+    setDeviceBusy(true)
+    try {
+      await removeDevice()
+      await refreshDeviceStatus()
+      localStorage.setItem('voicepay-device-registered', 'false')
+      announce('This device was removed. Set it up again before your next payment.')
+    } catch (error) {
+      announce(`The device could not be removed. ${error.message || 'Please try again.'}`, 'error')
+    } finally {
+      setDeviceBusy(false)
+    }
   }
 
   const pageClass = `app-shell theme-${settings.theme} text-${settings.textSize}`
@@ -742,7 +1216,7 @@ function App() {
         </div>
 
         <aside className="side-panel" aria-label="VoicePay tools">
-          {pendingAction && !isMobile && <PendingActionCard pendingAction={pendingAction} expiryText={expiryWarning} onConfirm={() => handlePending('confirm')} onCancel={() => handlePending('cancel')} pendingRef={pendingRef} isSending={isSending} onHear={hearProduct} onBuy={sendMessage} />}
+          {pendingAction && !isMobile && <PendingActionCard pendingAction={pendingAction} expiryText={expiryWarning} onConfirm={() => handlePending('confirm')} onCancel={() => handlePending('cancel')} pendingRef={pendingRef} isSending={isSending} onHear={hearProduct} onBuy={sendMessage} deviceApprovalStep={deviceApprovalStep} onDeviceApprove={handleDeviceApprove} deviceError={deviceError} />}
           <section className="side-card" aria-labelledby="recent-heading">
             <h2 id="recent-heading">My payments</h2>
             <p>Your latest payment activity will appear in the conversation when you ask for it.</p>
@@ -781,10 +1255,11 @@ function App() {
       {isSpeaking && <p className="speaking-indicator" role="status"><Icon name="speaker" size={20} /> {en.mic.speaking}</p>}
       {pendingAction && isMobile && (
         <div className="mobile-dialog-layer">
-      <PendingActionCard pendingAction={pendingAction} expiryText={expiryWarning} onConfirm={() => handlePending('confirm')} onCancel={() => handlePending('cancel')} pendingRef={pendingRef} isSending={isSending} isDialog onHear={hearProduct} onBuy={sendMessage} />
+      <PendingActionCard pendingAction={pendingAction} expiryText={expiryWarning} onConfirm={() => handlePending('confirm')} onCancel={() => handlePending('cancel')} pendingRef={pendingRef} isSending={isSending} isDialog onHear={hearProduct} onBuy={sendMessage} deviceApprovalStep={deviceApprovalStep} onDeviceApprove={handleDeviceApprove} deviceError={deviceError} />
         </div>
       )}
-      {showSettings && <SettingsDrawer settings={settings} speechRate={speechRate} onSettingsChange={updateSettings} onSpeechRateChange={updateSpeechRate} onClose={() => setShowSettings(false)} speak={speak} />}
+      {showSettings && <SettingsDrawer settings={settings} speechRate={speechRate} onSettingsChange={updateSettings} onSpeechRateChange={updateSpeechRate} onClose={() => setShowSettings(false)} speak={speak} deviceStatus={deviceStatus} deviceSupported={deviceSupported} deviceBusy={deviceBusy} onRegisterDevice={setupDevice} onRemoveDevice={forgetDevice} onRunSetup={() => beginSetup(1)} onFixMicrophone={() => beginSetup(2)} onFixDevice={() => beginSetup(3)} />}
+      {setupOpen && <SetupDialog step={setupStep} micStatus={micStatus} deviceSupported={deviceSupported} deviceStatus={deviceStatus} busy={setupBusy} onContinue={continueSetup} onDeviceSetup={guidedDeviceSetup} onPractice={practiceSetup} onSkip={skipSetup} onBack={() => { setSetupStep((current) => Math.max(1, current - 1)); setupMessage(en.setup.back) }} onRepeat={() => setupMessage(setupStep === 1 ? en.setup.welcome : setupStep === 2 ? en.setup.microphonePermission : setupStep === 3 ? en.setup.deviceIntro : en.setup.practiceIntro)} onFinish={() => finishSetup()} onUseTyping={useTypingInstead} />}
     </div>
   )
 }
