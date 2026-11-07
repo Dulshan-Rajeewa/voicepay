@@ -10,6 +10,7 @@ async function request(path, options = {}) {
   if (!response.ok) {
     const error = new Error(data.error || 'Secure confirmation could not be completed.')
     error.code = data.code
+    error.name = data.name || data.code || error.name
     throw error
   }
   return data
@@ -20,6 +21,19 @@ export async function isSupported() {
   return window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable
     ? window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()
     : false
+}
+
+export async function isPlatformAuthenticatorAvailable() {
+  if (!window.PublicKeyCredential?.isUserVerifyingPlatformAuthenticatorAvailable) return false
+  return window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()
+}
+
+export function isInAppBrowser() {
+  return /FBAN|FBAV|Instagram|WhatsApp|Line\/|TikTok|BytedanceWebview|Twitter|Snapchat|Pinterest/i.test(navigator.userAgent || '')
+}
+
+export async function getWebAuthnConfig() {
+  return request('/api/webauthn/config')
 }
 
 export async function registerDevice(deviceLabel = 'This device') {

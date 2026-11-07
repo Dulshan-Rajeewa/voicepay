@@ -114,6 +114,32 @@ test('keeps the registration challenge unchanged for browser verification', asyn
   assert.equal(options.challenge, expectedChallenge)
 })
 
+test('keeps a registration challenge across a simulated cold start', async () => {
+  const options = await getRegistrationOptions('cold-start-user')
+  clearWebAuthnState()
+  let expectedChallenge
+  await verifyRegistration(
+    'cold-start-user',
+    { id: 'registration', response: {} },
+    'Cold start phone',
+    async ({ expectedChallenge: challenge }) => {
+      expectedChallenge = challenge
+      return {
+        verified: true,
+        registrationInfo: {
+          credential: {
+            id: 'cold-start-credential',
+            publicKey: Uint8Array.from([1, 2, 3]),
+            counter: 1,
+            transports: ['internal'],
+          },
+        },
+      }
+    },
+  )
+  assert.equal(options.challenge, expectedChallenge)
+})
+
 test('rejects a wrong challenge', async () => {
   await setupCredential()
   const action = await createAction()

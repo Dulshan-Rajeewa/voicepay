@@ -124,3 +124,7 @@ html[data-reduce-motion="on"] *, html[data-reduce-motion="on"] *::before, html[d
 html[data-theme="high-contrast"] .action-tile { color: #000; }
 html[data-theme="dark"] .action-tile { color: #000; }
 @media (forced-colors: active) { * { forced-color-adjust: auto; } .status-pill, button, input, select, .welcome-panel, .conversation, .side-card, .pending-panel, .quick-actions, .caption-strip { border: 2px solid CanvasText; } }
+.troubleshoot { margin-top: .75rem; border-top: 1px solid var(--border); padding-top: .75rem; }
+.troubleshoot summary { cursor: pointer; font-weight: 800; }
+.troubleshoot-copy { overflow-wrap: anywhere; font-size: .9rem; }
+.troubleshoot-copy p { margin: .4rem 0; }

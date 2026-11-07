@@ -55,8 +55,56 @@ export function getOrCreateUserId(request, response) {
 
 function cleanError(error, fallback = 'Device confirmation could not be completed.') {
   const clean = new Error(error?.message || fallback)
-  clean.code = error?.code || 'WEBAUTHN_ERROR'
+  clean.code = error?.code || mapWebAuthnErrorCode(error)
+  clean.publicMessage = error?.publicMessage || friendlyWebAuthnMessage(clean.code, clean.message, fallback)
   return clean
+}
+
+function mapWebAuthnErrorCode(error) {
+  const message = String(error?.message || '').toLowerCase()
+  if (message.includes('origin')) return 'ORIGIN_MISMATCH'
+  if (message.includes('rp id') || message.includes('rp_id') || message.includes('relying party')) return 'RPID_MISMATCH'
+  if (message.includes('challenge')) return 'CHALLENGE_NOT_FOUND'
+  return 'WEBAUTHN_ERROR'
+}
+
+function friendlyWebAuthnMessage(code, message, fallback) {
+  if (code === 'ORIGIN_MISMATCH') return 'This site address is not allowed. Open VoicePay at its stable production address.'
+  if (code === 'RPID_MISMATCH') return 'This device is linked to a different site address. Open VoicePay at its stable production address and register again.'
+  if (code === 'CHALLENGE_NOT_FOUND') return 'The device check has expired. Press the setup button again.'
+  if (code === 'NO_SESSION') return 'Your secure session is missing. Refresh VoicePay and try again.'
+  if (code === 'DEVICE_NOT_REGISTERED') return message
+  return fallback
+}
+
+function getRequestOrigin(request) {
+  const headerOrigin = request?.get?.('origin')
+  if (headerOrigin) return headerOrigin.replace(/\/+$/, '')
+  if (!request) return null
+  const protocol = request.protocol || 'https'
+  const host = request.get('host')
+  return host ? `${protocol}://${host}` : null
+}
+
+export function getWebAuthnContext(request) {
+  const origin = getRequestOrigin(request)
+  if (!request) {
+    return { origin: config.origins[0], rpId: config.rpId, origins: config.origins }
+  }
+  if (!origin || !config.origins.includes(origin)) {
+    throw Object.assign(new Error('The request origin is not allowed.'), {
+      code: 'ORIGIN_MISMATCH',
+      publicMessage: 'This site address is not allowed. Open VoicePay at its stable production address.',
+    })
+  }
+  const hostname = new URL(origin).hostname
+  if (hostname === 'vercel.app' || hostname.endsWith('.vercel.app') && hostname.split('.').length < 3) {
+    throw Object.assign(new Error('A public-suffix RP ID is not allowed.'), {
+      code: 'RPID_MISMATCH',
+      publicMessage: 'Use your stable Vercel production address, not a preview address.',
+    })
+  }
+  return { origin, rpId: hostname, origins: [origin] }
 }
 
 function getActionBinding(action, nonce) {
@@ -72,7 +120,8 @@ export function createActionChallenge(action, nonce = randomBytes(32)) {
   return toBase64Url(createHash('sha256').update(getActionBinding(action, nonce)).digest())
 }
 
-export async function getRegistrationOptions(userId) {
+export async function getRegistrationOptions(userId, request) {
+  const webAuthn = getWebAuthnContext(request)
   const credentials = await getCredentials(userId)
   const challengeBytes = randomBytes(32)
   const challenge = toBase64Url(challengeBytes)
@@ -85,7 +134,7 @@ export async function getRegistrationOptions(userId) {
 
   return generateRegistrationOptions({
     rpName: config.rpName,
-    rpID: config.rpId,
+    rpID: webAuthn.rpId,
     userName: userId,
     userID: Buffer.from(userId),
     challenge: challengeBytes,
@@ -108,11 +157,14 @@ export async function verifyRegistration(
   response,
   deviceLabel = 'This device',
   verifyFn = verifyRegistrationResponse,
+  request,
 ) {
+  const webAuthn = getWebAuthnContext(request)
   const challengeEntry = await getAndConsumeChallenge(`registration:${userId}`)
-  if (!challengeEntry || challengeEntry.expiresAt <= Date.now()) {
+  if (!challengeEntry || new Date(challengeEntry.expiresAt).getTime() <= Date.now()) {
     throw Object.assign(new Error('Registration has expired. Please start again.'), {
       code: 'WEBAUTHN_CHALLENGE_EXPIRED',
+      publicMessage: 'The device setup has expired. Press Set up this device again.',
     })
   }
 
@@ -120,8 +172,8 @@ export async function verifyRegistration(
     const verification = await verifyFn({
       response,
       expectedChallenge: challengeEntry.challenge,
-      expectedOrigin: config.origins,
-      expectedRPID: config.rpId,
+      expectedOrigin: webAuthn.origins,
+      expectedRPID: webAuthn.rpId,
       requireUserVerification: true,
     })
 
@@ -154,7 +206,8 @@ export async function removeCredentials(userId) {
   return { registered: false }
 }
 
-export async function getApprovalOptions(actionId, sessionId, userId) {
+export async function getApprovalOptions(actionId, sessionId, userId, request) {
+  const webAuthn = getWebAuthnContext(request)
   const action = await getPendingAction(actionId, sessionId)
   if (!action) throw new Error('Pending action was not found.')
   if (action.status !== 'pending') throw new Error('This action can no longer be approved.')
@@ -183,7 +236,7 @@ export async function getApprovalOptions(actionId, sessionId, userId) {
   })
 
   return generateAuthenticationOptions({
-    rpID: config.rpId,
+    rpID: webAuthn.rpId,
     challenge: fromBase64Url(challenge),
     allowCredentials: credentials.map((credential) => ({
       id: credential.credentialID,
@@ -199,18 +252,22 @@ export async function verifyApproval(
   userId,
   response,
   verifyFn = verifyAuthenticationResponse,
+  request,
 ) {
+  const webAuthn = getWebAuthnContext(request)
   const pending = await getAndConsumeChallenge(`approval:${actionId}`)
   const action = await getPendingAction(actionId, sessionId)
 
   if (!pending || new Date(pending.expiresAt).getTime() <= Date.now()) {
     throw Object.assign(new Error('Device approval has expired. Please try again.'), {
       code: 'WEBAUTHN_CHALLENGE_EXPIRED',
+      publicMessage: 'The device check has expired. Press the button again.',
     })
   }
   if (pending.sessionId !== sessionId || pending.userId !== userId || pending.actionId !== action?.id) {
     throw Object.assign(new Error('This device approval does not belong to this action.'), {
       code: 'WEBAUTHN_ACTION_MISMATCH',
+      publicMessage: 'This device check belongs to a different payment. Start the check again.',
     })
   }
 
@@ -226,8 +283,8 @@ export async function verifyApproval(
     const verification = await verifyFn({
       response,
       expectedChallenge: pending.challenge,
-      expectedOrigin: config.origins,
-      expectedRPID: config.rpId,
+      expectedOrigin: webAuthn.origins,
+      expectedRPID: webAuthn.rpId,
       requireUserVerification: true,
       advancedFIDOConfig: { userVerification: 'required' },
       credential: {
@@ -254,7 +311,8 @@ export async function verifyApproval(
   }
 }
 
-export async function getPracticeOptions(userId) {
+export async function getPracticeOptions(userId, request) {
+  const webAuthn = getWebAuthnContext(request)
   const credentials = await getCredentials(userId)
   if (credentials.length === 0) {
     throw Object.assign(new Error('No device is set up. Set up this device first.'), {
@@ -276,7 +334,7 @@ export async function getPracticeOptions(userId) {
   })
 
   return generateAuthenticationOptions({
-    rpID: config.rpId,
+    rpID: webAuthn.rpId,
     challenge: fromBase64Url(challenge),
     allowCredentials: credentials.map((credential) => ({
       id: credential.credentialID,
@@ -286,11 +344,13 @@ export async function getPracticeOptions(userId) {
   })
 }
 
-export async function verifyPractice(userId, response, verifyFn = verifyAuthenticationResponse) {
+export async function verifyPractice(userId, response, verifyFn = verifyAuthenticationResponse, request) {
+  const webAuthn = getWebAuthnContext(request)
   const challenge = await getAndConsumeChallenge(`practice:${userId}`)
   if (!challenge || new Date(challenge.expiresAt).getTime() <= Date.now()) {
     throw Object.assign(new Error('The practice check expired. Please try again.'), {
       code: 'WEBAUTHN_CHALLENGE_EXPIRED',
+      publicMessage: 'The practice check has expired. Press Practice now again.',
     })
   }
 
@@ -306,8 +366,8 @@ export async function verifyPractice(userId, response, verifyFn = verifyAuthenti
     const verification = await verifyFn({
       response,
       expectedChallenge: challenge.challenge,
-      expectedOrigin: config.origins,
-      expectedRPID: config.rpId,
+      expectedOrigin: webAuthn.origins,
+      expectedRPID: webAuthn.rpId,
       requireUserVerification: true,
       advancedFIDOConfig: { userVerification: 'required' },
       credential: {
@@ -338,4 +398,14 @@ export function clearWebAuthnState() {
 
 export function expireApprovalForTest(actionId) {
   return getAndConsumeChallenge(`approval:${actionId}`)
+}
+
+export function getPublicWebAuthnConfig(request) {
+  const webAuthn = getWebAuthnContext(request)
+  return {
+    rpId: webAuthn.rpId,
+    expectedOrigins: config.origins,
+    currentOrigin: webAuthn.origin,
+    storage: config.storageDriver,
+  }
 }

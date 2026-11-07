@@ -197,6 +197,27 @@ Keep `GOOGLE_APPLICATION_CREDENTIALS` empty on Vercel. Never commit
 `serviceAccount.json`, paste its JSON into source control, or print the
 base64 value in logs.
 
+### Vercel WebAuthn deployment
+
+Vercel must use Firestore because functions are stateless:
+
+```env
+NODE_ENV=production
+STORAGE_DRIVER=firestore
+FIREBASE_SERVICE_ACCOUNT_B64=<base64 service-account JSON>
+ALLOWED_ORIGINS=https://your-stable-project.vercel.app
+APP_BASE_URL=https://your-stable-project.vercel.app
+RP_ID=your-stable-project.vercel.app
+REQUIRE_DEVICE_AUTH=true
+ALLOW_DEMO_MODE=false
+```
+
+Use the stable production address for `ALLOWED_ORIGINS`, `APP_BASE_URL`, and
+`RP_ID`. Do not use a Vercel preview URL, and never use `vercel.app` alone as
+the RP ID. After changing the deployment address, register every device again.
+The `/api` rewrite in [vercel.json](./vercel.json) keeps the browser and API on
+the same origin, which is required for the secure cookie and WebAuthn.
+
 ### Resetting demo data
 
 Run this before recording or presenting:

@@ -8,6 +8,9 @@ import {
   registerDevice,
   removeDevice,
   practiceApproval,
+  getWebAuthnConfig,
+  isPlatformAuthenticatorAvailable,
+  isInAppBrowser,
 } from './services/webauthn'
 
 const SESSION_STORAGE_KEY = 'voicepay-session-id'
@@ -128,6 +131,8 @@ function SettingsDrawer({
   onRunSetup,
   onFixMicrophone,
   onFixDevice,
+  diagnostics,
+  onCopyLink,
 }) {
   const drawerRef = useRef(null)
   const update = (key, value) => onSettingsChange({ ...settings, [key]: value })
@@ -232,6 +237,22 @@ function SettingsDrawer({
             <button type="button" className="secondary-button" onClick={onFixDevice} disabled={deviceBusy}>Fix device check</button>
           </div>
           {!deviceSupported && <p className="device-help">This browser does not support device checks. Try a recent Chrome, Safari, or Edge browser.</p>}
+          <details className="troubleshoot">
+            <summary>Troubleshoot</summary>
+            <div className="troubleshoot-copy">
+              <p>Secure context: {String(diagnostics.secureContext)}</p>
+              <p>Page address: {diagnostics.origin || 'unknown'}</p>
+              <p>Server RP ID: {diagnostics.rpId || 'unknown'}</p>
+              <p>Server origins: {diagnostics.expectedOrigins?.join(', ') || 'unknown'}</p>
+              <p>Device check support: {String(diagnostics.supported)}</p>
+              <p>Platform check available: {String(diagnostics.platformAvailable)}</p>
+              <p>In-app browser: {String(diagnostics.inAppBrowser)}</p>
+              {diagnostics.inAppBrowser && <p className="device-help">Please open this page in Chrome or Safari.</p>}
+              <p>Last error: {diagnostics.lastError ? `${diagnostics.lastError.name}: ${diagnostics.lastError.message}` : 'none'}</p>
+              {diagnostics.lastFix && <p>{diagnostics.lastFix}</p>}
+            </div>
+            {diagnostics.inAppBrowser && <button type="button" className="secondary-button" onClick={onCopyLink}>Copy link</button>}
+          </details>
         </fieldset>
 
         <fieldset>
@@ -466,6 +487,17 @@ function App() {
   const [deviceBusy, setDeviceBusy] = useState(false)
   const [deviceApprovalStep, setDeviceApprovalStep] = useState(null)
   const [deviceError, setDeviceError] = useState('')
+  const [webauthnDiagnostics, setWebauthnDiagnostics] = useState({
+    secureContext: window.isSecureContext,
+    origin: window.location.origin,
+    rpId: '',
+    expectedOrigins: [],
+    supported: false,
+    platformAvailable: false,
+    inAppBrowser: isInAppBrowser(),
+    lastError: null,
+    lastFix: '',
+  })
   const [setupOpen, setSetupOpen] = useState(() => localStorage.getItem(SETUP_KEY) !== 'done')
   const [setupStep, setSetupStep] = useState(() => localStorage.getItem(SETUP_KEY) === 'done' ? 1 : 1)
   const [micStatus, setMicStatus] = useState(() => localStorage.getItem('voicepay-mic-status') || 'prompt')
@@ -545,12 +577,30 @@ function App() {
 
   const refreshDeviceStatus = useCallback(async () => {
     try {
-      const [status, supported] = await Promise.all([getDeviceStatus(), isWebAuthnSupported()])
+      const [status, supported, platformAvailable, webAuthnConfig] = await Promise.all([
+        getDeviceStatus(),
+        isWebAuthnSupported(),
+        isPlatformAuthenticatorAvailable(),
+        getWebAuthnConfig(),
+      ])
       setDeviceStatus(status)
       localStorage.setItem('voicepay-device-registered', status.registered ? 'true' : 'false')
       setDeviceSupported(supported)
-    } catch {
+      setWebauthnDiagnostics((current) => ({
+        ...current,
+        supported,
+        platformAvailable,
+        rpId: webAuthnConfig.rpId,
+        expectedOrigins: webAuthnConfig.expectedOrigins,
+        origin: webAuthnConfig.currentOrigin || current.origin,
+      }))
+    } catch (error) {
       setDeviceSupported(false)
+      setWebauthnDiagnostics((current) => ({
+        ...current,
+        lastError: { name: error.name || 'Error', message: error.message || 'Could not load device-check settings.' },
+        lastFix: 'Refresh VoicePay and open it at the stable production address.',
+      }))
     }
   }, [])
 
@@ -673,6 +723,10 @@ function App() {
   }, [setupMessage])
 
   const guidedDeviceSetup = useCallback(async () => {
+    if (webauthnDiagnostics.inAppBrowser) {
+      setupMessage('Please open this page in Chrome or Safari, then press Set up now again.')
+      return
+    }
     if (deviceBusy || !deviceSupported) {
       setupMessage(en.setup.deviceUnsupported)
       return
@@ -690,7 +744,7 @@ function App() {
     } finally {
       setSetupBusy(false)
     }
-  }, [deviceBusy, deviceSupported, refreshDeviceStatus, setupMessage])
+  }, [deviceBusy, deviceSupported, refreshDeviceStatus, setupMessage, webauthnDiagnostics.inAppBrowser])
 
   const practiceSetup = useCallback(async () => {
     setSetupBusy(true)
@@ -1144,8 +1198,22 @@ function App() {
 
   const setupDevice = async () => {
     if (deviceBusy) return
+    if (webauthnDiagnostics.inAppBrowser) {
+      const text = 'Please open this page in Chrome or Safari, then press Set up this device again.'
+      setWebauthnDiagnostics((current) => ({ ...current, lastError: { name: 'NotAllowedError', message: 'In-app browser detected.' }, lastFix: text }))
+      announce(text, 'error')
+      return
+    }
+    if (!window.isSecureContext) {
+      const text = 'This page is not secure. Open VoicePay at its HTTPS address in Chrome or Safari.'
+      setWebauthnDiagnostics((current) => ({ ...current, lastError: { name: 'SecurityError', message: 'Not a secure context.' }, lastFix: text }))
+      announce(text, 'error')
+      return
+    }
     if (!deviceSupported) {
-      announce('This browser cannot use secure device confirmation. Try a recent Chrome, Safari, or Edge browser.', 'error')
+      const text = 'This browser cannot use secure device confirmation. Try a recent Chrome or Safari browser on a device with a screen lock.'
+      setWebauthnDiagnostics((current) => ({ ...current, lastError: { name: 'NotSupportedError', message: 'Platform authenticator is unavailable.' }, lastFix: text }))
+      announce(text, 'error')
       return
     }
     setDeviceBusy(true)
@@ -1155,9 +1223,14 @@ function App() {
       announce('This device is ready for secure confirmation.')
       vibrate([120, 80, 120])
     } catch (error) {
-      const text = error.name === 'NotAllowedError'
-        ? 'Device setup was cancelled. Nothing changed. Press Set up this device to try again.'
-        : `This device could not be set up. ${error.message || 'Please try again.'}`
+      const fixes = {
+        SecurityError: 'Check the site address in Settings and use the stable VoicePay address.',
+        NotAllowedError: 'Try again from a tap in Chrome or Safari. Make sure your device has a screen lock.',
+        NotSupportedError: 'Use a recent Chrome or Safari browser on a device with a screen lock.',
+        InvalidStateError: 'This device is already registered. Use Remove this device, then set it up again if needed.',
+      }
+      const text = fixes[error.name] || `This device could not be set up. ${error.message || 'Please try again.'}`
+      setWebauthnDiagnostics((current) => ({ ...current, lastError: { name: error.name || 'Error', message: error.message || 'Unknown error' }, lastFix: text }))
       announce(text, 'error')
       vibrate([80, 60, 80])
     } finally {
@@ -1278,7 +1351,7 @@ function App() {
       <PendingActionCard pendingAction={pendingAction} expiryText={expiryWarning} onConfirm={() => handlePending('confirm')} onCancel={() => handlePending('cancel')} pendingRef={pendingRef} isSending={isSending} isDialog onHear={hearProduct} onBuy={sendMessage} deviceApprovalStep={deviceApprovalStep} onDeviceApprove={handleDeviceApprove} deviceError={deviceError} />
         </div>
       )}
-      {showSettings && <SettingsDrawer settings={settings} speechRate={speechRate} onSettingsChange={updateSettings} onSpeechRateChange={updateSpeechRate} onClose={() => setShowSettings(false)} speak={speak} deviceStatus={deviceStatus} deviceSupported={deviceSupported} deviceBusy={deviceBusy} onRegisterDevice={setupDevice} onRemoveDevice={forgetDevice} onRunSetup={() => beginSetup(1)} onFixMicrophone={() => beginSetup(2)} onFixDevice={() => beginSetup(3)} />}
+      {showSettings && <SettingsDrawer settings={settings} speechRate={speechRate} onSettingsChange={updateSettings} onSpeechRateChange={updateSpeechRate} onClose={() => setShowSettings(false)} speak={speak} deviceStatus={deviceStatus} deviceSupported={deviceSupported} deviceBusy={deviceBusy} onRegisterDevice={setupDevice} onRemoveDevice={forgetDevice} onRunSetup={() => beginSetup(1)} onFixMicrophone={() => beginSetup(2)} onFixDevice={() => beginSetup(3)} diagnostics={webauthnDiagnostics} onCopyLink={() => { navigator.clipboard?.writeText(window.location.href); announce('The link was copied. Open it in Chrome or Safari.') }} />}
       {setupOpen && <SetupDialog step={setupStep} micStatus={micStatus} deviceSupported={deviceSupported} deviceStatus={deviceStatus} busy={setupBusy} onContinue={continueSetup} onDeviceSetup={guidedDeviceSetup} onPractice={practiceSetup} onSkip={skipSetup} onBack={() => { setSetupStep((current) => Math.max(1, current - 1)); setupMessage(en.setup.back) }} onRepeat={() => setupMessage(setupStep === 1 ? en.setup.welcome : setupStep === 2 ? en.setup.microphonePermission : setupStep === 3 ? en.setup.deviceIntro : en.setup.practiceIntro)} onFinish={() => finishSetup()} onUseTyping={useTypingInstead} />}
     </div>
   )

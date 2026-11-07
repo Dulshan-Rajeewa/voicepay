@@ -7,6 +7,7 @@ dotenv.config()
 
 const useMockPaypal = process.env.USE_MOCK_PAYPAL === 'true'
 const isProduction = process.env.NODE_ENV === 'production'
+const isVercel = process.env.VERCEL === '1'
 const paypalBaseUrl = (process.env.PAYPAL_BASE_URL ?? 'https://api-m.sandbox.paypal.com').replace(/\/+$/, '')
 const allowDemoMode = process.env.ALLOW_DEMO_MODE === 'true'
 
@@ -32,9 +33,10 @@ if (!Number.isFinite(maxPaymentUsd) || maxPaymentUsd <= 0) {
   throw new Error('MAX_PAYMENT_USD must be a positive number.')
 }
 
-const origins = (process.env.ORIGIN ?? process.env.CLIENT_ORIGIN ?? 'http://localhost:5173')
+const origins = (process.env.ALLOWED_ORIGINS ?? process.env.ORIGIN ?? process.env.CLIENT_ORIGIN ?? 'http://localhost:5173')
   .split(',')
   .map((origin) => origin.trim())
+  .map((origin) => origin.replace(/\/+$/, ''))
   .filter(Boolean)
 
 const requireDeviceAuth = process.env.REQUIRE_DEVICE_AUTH !== 'false'
@@ -42,6 +44,10 @@ const storageDriver = process.env.STORAGE_DRIVER ?? 'file'
 
 if (!['file', 'firestore'].includes(storageDriver)) {
   throw new Error('STORAGE_DRIVER must be either file or firestore.')
+}
+
+if (isVercel && storageDriver !== 'firestore') {
+  throw new Error('Vercel deployments must use STORAGE_DRIVER=firestore because local files and memory are not persistent.')
 }
 
 if (storageDriver === 'firestore' &&
@@ -73,6 +79,7 @@ export function isDeviceAuthRequired() {
 export const config = Object.freeze({
   port: Number(process.env.PORT ?? '3001'),
   isProduction,
+  isVercel,
   appBaseUrl,
   allowDemoMode,
   clientOrigin: process.env.CLIENT_ORIGIN ?? 'http://localhost:5173',

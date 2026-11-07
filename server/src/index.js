@@ -78,9 +78,13 @@ app.use((error, _request, response, _next) => {
   })
 })
 
-app.listen(config.port, '0.0.0.0', () => {
-  console.log(`VoicePay server listening on port ${config.port}`)
-  if (!config.requireDeviceAuth) {
-    console.warn('WARNING: REQUIRE_DEVICE_AUTH=false is DEMO ONLY. Never use this setting in production.')
-  }
-})
+if (!config.isVercel) {
+  app.listen(config.port, '0.0.0.0', () => {
+    console.log(`VoicePay server listening on port ${config.port}`)
+    if (!config.requireDeviceAuth) {
+      console.warn('WARNING: REQUIRE_DEVICE_AUTH=false is DEMO ONLY. Never use this setting in production.')
+    }
+  })
+}
+
+export default app
