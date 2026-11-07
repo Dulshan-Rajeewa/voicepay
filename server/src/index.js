@@ -8,6 +8,7 @@ import { config } from './config.js'
 import actionsRouter from './routes/actions.js'
 import chatRouter from './routes/chat.js'
 import webauthnRouter from './routes/webauthn.js'
+import pinRouter from './routes/pin.js'
 
 const app = express()
 app.set('trust proxy', 1)
@@ -44,6 +45,7 @@ app.use('/api/confirm', apiLimiter)
 app.use('/api', actionsRouter)
 app.use('/api', chatRouter)
 app.use('/api/webauthn', webauthnRouter)
+app.use('/api/pin', apiLimiter, pinRouter)
 
 app.get('/api/health', (_request, response) => {
   response.json({

@@ -218,6 +218,12 @@ the RP ID. After changing the deployment address, register every device again.
 The `/api` rewrite in [vercel.json](./vercel.json) keeps the browser and API on
 the same origin, which is required for the secure cookie and WebAuthn.
 
+VoicePay PIN fallback is enabled by default with `ALLOW_PIN_FALLBACK=true`.
+WebAuthn remains preferred. The PIN is a six-digit scrypt hash stored in the
+same Firestore/file driver as credentials, with five-attempt protection and a
+15-minute lockout. Never use voice input for the PIN; use the on-screen pad or
+password input.
+
 ### Resetting demo data
 
 Run this before recording or presenting:

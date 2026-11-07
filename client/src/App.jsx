@@ -8,6 +8,10 @@ import {
   registerDevice,
   removeDevice,
   practiceApproval,
+  getPinStatus,
+  setPin,
+  changePin,
+  approveWithPin,
   getWebAuthnConfig,
   isPlatformAuthenticatorAvailable,
   isInAppBrowser,
@@ -133,6 +137,8 @@ function SettingsDrawer({
   onFixDevice,
   diagnostics,
   onCopyLink,
+  pinStatus,
+  onSetPin,
 }) {
   const drawerRef = useRef(null)
   const update = (key, value) => onSettingsChange({ ...settings, [key]: value })
@@ -233,6 +239,10 @@ function SettingsDrawer({
               Remove this device
             </button>
           </div>
+          {pinStatus?.allowed && <div className="device-actions">
+            <p className="device-status">{pinStatus.configured ? en.pin.setUp : en.pin.notSet}</p>
+            <button type="button" className="secondary-button" onClick={onSetPin}>{pinStatus.configured ? en.pin.change : en.pin.set}</button>
+          </div>}
           <div className="device-actions">
             <button type="button" className="secondary-button" onClick={onFixDevice} disabled={deviceBusy}>Fix device check</button>
           </div>
@@ -290,6 +300,8 @@ function SetupDialog({
   onRepeat,
   onFinish,
   onUseTyping,
+  pinAvailable,
+  onPinSetup,
 }) {
   const headingRef = useRef(null)
   useEffect(() => {
@@ -333,6 +345,7 @@ function SetupDialog({
           {step === 2 && micStatus !== 'granted' && <button type="button" className="primary-button full-width" onClick={onContinue} disabled={busy}>{en.setup.continue}</button>}
           {step === 2 && micStatus === 'granted' && <button type="button" className="primary-button full-width" onClick={onContinue}>{en.setup.continue}</button>}
           {step === 3 && !deviceStatus?.registered && <button type="button" className="primary-button full-width" onClick={onDeviceSetup} disabled={busy || !deviceSupported}>{busy ? 'Setting up...' : en.setup.setUpNow}</button>}
+          {step === 3 && pinAvailable && !deviceSupported && <button type="button" className="secondary-button full-width" onClick={onPinSetup}>{en.pin.set}</button>}
           {step === 3 && deviceStatus?.registered && <button type="button" className="primary-button full-width" onClick={onContinue}>{en.setup.continue}</button>}
           {step === 4 && <button type="button" className="primary-button full-width" onClick={onPractice} disabled={busy || !deviceStatus?.registered}>{busy ? 'Checking...' : en.setup.practice}</button>}
           {step === 4 && deviceStatus?.registered && <button type="button" className="secondary-button full-width" onClick={onFinish}>{en.setup.done}</button>}
@@ -424,6 +437,9 @@ function PendingActionCard({
   deviceApprovalStep,
   onDeviceApprove,
   deviceError,
+  onPinApprove,
+  pinAvailable,
+  deviceSupported,
 }) {
   const amount = pendingAction.details?.amount || pendingAction.details?.total
   const items = pendingAction.details?.items
@@ -452,6 +468,7 @@ function PendingActionCard({
           <button type="button" className="device-check-button" onClick={onDeviceApprove} disabled={isSending} autoFocus>
             <Icon name="check" size={28} />Check it&apos;s you
           </button>
+          {pinAvailable && (!deviceSupported || deviceError) && <button type="button" className="secondary-button full-width" onClick={onPinApprove} disabled={isSending}>{en.pin.fallback}</button>}
           <button type="button" className="cancel-button" onClick={onCancel} disabled={isSending}><Icon name="x" size={22} />{en.cancel}</button>
         </div>
       ) : (
@@ -462,6 +479,37 @@ function PendingActionCard({
       )}
       <p className="confirmation-help">You can also say “confirm” or “cancel”. Press Escape to cancel.</p>
     </section>
+  )
+}
+
+function PinDialog({ mode, value, currentValue, onValueChange, onCurrentChange, onDone, onCancel }) {
+  const title = mode === 'approve' ? 'Enter your VoicePay PIN' : mode === 'change' ? 'Change your VoicePay PIN' : 'Set up your VoicePay PIN'
+  const addDigit = (digit) => {
+    if (value.length < 6) onValueChange(`${value}${digit}`)
+  }
+  const removeDigit = () => onValueChange(value.slice(0, -1))
+  return (
+    <div className="setup-layer" role="presentation">
+      <section className="pin-dialog" role="dialog" aria-modal="true" aria-labelledby="pin-heading">
+        <h2 id="pin-heading" tabIndex="-1">{title}</h2>
+        <p>{en.pin.warning}</p>
+        <p>{en.pin.noVoice}</p>
+        {mode === 'change' && <label className="pin-label">Current PIN
+          <input type="password" inputMode="numeric" autoComplete="current-password" maxLength="6" value={currentValue} onChange={(event) => onCurrentChange(event.target.value.replace(/\D/g, '').slice(0, 6))} />
+        </label>}
+        <label className="pin-label">Six digit PIN
+          <input type="password" inputMode="numeric" autoComplete={mode === 'set' ? 'new-password' : 'current-password'} maxLength="6" value={value} onChange={(event) => onValueChange(event.target.value.replace(/\D/g, '').slice(0, 6))} aria-describedby="pin-status" />
+        </label>
+        <p id="pin-status" aria-live="polite">{en.pin.digit(value.length)}</p>
+        <div className="pin-pad" aria-label="PIN number pad">
+          {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((digit) => <button type="button" key={digit} onClick={() => addDigit(String(digit))} aria-label={`Enter digit ${digit}`}>{digit}</button>)}
+          <button type="button" onClick={removeDigit} aria-label={en.pin.delete}>{en.pin.delete}</button>
+          <button type="button" onClick={() => addDigit('0')} aria-label="Enter digit 0">0</button>
+          <button type="button" onClick={onDone} aria-label={en.pin.done}>{en.pin.done}</button>
+        </div>
+        <button type="button" className="cancel-button" onClick={onCancel}>{en.cancel}</button>
+      </section>
+    </div>
   )
 }
 
@@ -487,6 +535,10 @@ function App() {
   const [deviceBusy, setDeviceBusy] = useState(false)
   const [deviceApprovalStep, setDeviceApprovalStep] = useState(null)
   const [deviceError, setDeviceError] = useState('')
+  const [pinStatus, setPinStatus] = useState({ configured: false, allowed: true })
+  const [pinDialog, setPinDialog] = useState(null)
+  const [pinValue, setPinValue] = useState('')
+  const [pinCurrent, setPinCurrent] = useState('')
   const [webauthnDiagnostics, setWebauthnDiagnostics] = useState({
     secureContext: window.isSecureContext,
     origin: window.location.origin,
@@ -577,15 +629,17 @@ function App() {
 
   const refreshDeviceStatus = useCallback(async () => {
     try {
-      const [status, supported, platformAvailable, webAuthnConfig] = await Promise.all([
+      const [status, supported, platformAvailable, webAuthnConfig, pin] = await Promise.all([
         getDeviceStatus(),
         isWebAuthnSupported(),
         isPlatformAuthenticatorAvailable(),
         getWebAuthnConfig(),
+        getPinStatus(),
       ])
       setDeviceStatus(status)
       localStorage.setItem('voicepay-device-registered', status.registered ? 'true' : 'false')
       setDeviceSupported(supported)
+      setPinStatus(pin)
       setWebauthnDiagnostics((current) => ({
         ...current,
         supported,
@@ -739,6 +793,7 @@ function App() {
       setupMessage(`${en.setup.deviceReady} ${en.setup.practiceIntro}`)
       setSetupStep(4)
     } catch (error) {
+      setDeviceSupported(false)
       const text = error.name === 'NotAllowedError' ? en.setup.deviceCancelled : `This device could not be set up. ${error.message || 'Please try again.'}`
       setupMessage(text)
     } finally {
@@ -1196,6 +1251,57 @@ function App() {
     else sendMessage(value)
   }
 
+  const announcePinDigit = useCallback((value) => {
+    if (value.length < 6) {
+      announce(en.pin.digit(value.length))
+      vibrate(12)
+    }
+  }, [announce, vibrate])
+
+  const submitPin = useCallback(async () => {
+    if (pinValue.length !== 6) {
+      announce('Enter all six digits first.', 'error')
+      return
+    }
+    setDeviceBusy(true)
+    try {
+      if (pinDialog === 'approve') {
+        await approveWithPin(pendingAction.id, pinValue, sessionIdRef.current)
+        setPinDialog(null)
+        setPinValue('')
+        setDeviceApprovalStep('approved')
+        await executeConfirmedAction()
+      } else if (pinDialog === 'set') {
+        await setPin(pinValue)
+        setPinStatus((current) => ({ ...current, configured: true }))
+        setPinDialog(null)
+        setPinValue('')
+        announce(en.pin.ready)
+      } else if (pinDialog === 'change') {
+        if (pinCurrent.length !== 6) {
+          announce('Enter your current six digit PIN first.', 'error')
+          return
+        }
+        await changePin(pinCurrent, pinValue)
+        setPinDialog(null)
+        setPinValue('')
+        setPinCurrent('')
+        announce(en.pin.changed)
+      }
+    } catch (error) {
+      announce(error.message || 'The PIN did not work. Try again.', 'error')
+    } finally {
+      setDeviceBusy(false)
+    }
+  }, [announce, executeConfirmedAction, pendingAction, pinCurrent, pinDialog, pinValue])
+
+  const openPinEntry = useCallback((mode) => {
+    setPinValue('')
+    setPinCurrent('')
+    setPinDialog(mode)
+    announce(mode === 'approve' ? `${en.pin.warning} ${en.pin.noVoice}` : mode === 'change' ? en.pin.current : en.pin.new)
+  }, [announce])
+
   const setupDevice = async () => {
     if (deviceBusy) return
     if (webauthnDiagnostics.inAppBrowser) {
@@ -1204,6 +1310,7 @@ function App() {
       announce(text, 'error')
       return
     }
+
     if (!window.isSecureContext) {
       const text = 'This page is not secure. Open VoicePay at its HTTPS address in Chrome or Safari.'
       setWebauthnDiagnostics((current) => ({ ...current, lastError: { name: 'SecurityError', message: 'Not a secure context.' }, lastFix: text }))
@@ -1309,7 +1416,7 @@ function App() {
         </div>
 
         <aside className="side-panel" aria-label="VoicePay tools">
-          {pendingAction && !isMobile && <PendingActionCard pendingAction={pendingAction} expiryText={expiryWarning} onConfirm={() => handlePending('confirm')} onCancel={() => handlePending('cancel')} pendingRef={pendingRef} isSending={isSending} onHear={hearProduct} onBuy={sendMessage} deviceApprovalStep={deviceApprovalStep} onDeviceApprove={handleDeviceApprove} deviceError={deviceError} />}
+          {pendingAction && !isMobile && <PendingActionCard pendingAction={pendingAction} expiryText={expiryWarning} onConfirm={() => handlePending('confirm')} onCancel={() => handlePending('cancel')} pendingRef={pendingRef} isSending={isSending} onHear={hearProduct} onBuy={sendMessage} deviceApprovalStep={deviceApprovalStep} onDeviceApprove={handleDeviceApprove} onPinApprove={() => openPinEntry('approve')} pinAvailable={pinStatus.allowed && pinStatus.configured} deviceSupported={deviceSupported} deviceError={deviceError} />}
           <section className="side-card" aria-labelledby="recent-heading">
             <h2 id="recent-heading">My payments</h2>
             <p>Your latest payment activity will appear in the conversation when you ask for it.</p>
@@ -1348,11 +1455,12 @@ function App() {
       {isSpeaking && <p className="speaking-indicator" role="status"><Icon name="speaker" size={20} /> {en.mic.speaking}</p>}
       {pendingAction && isMobile && (
         <div className="mobile-dialog-layer">
-      <PendingActionCard pendingAction={pendingAction} expiryText={expiryWarning} onConfirm={() => handlePending('confirm')} onCancel={() => handlePending('cancel')} pendingRef={pendingRef} isSending={isSending} isDialog onHear={hearProduct} onBuy={sendMessage} deviceApprovalStep={deviceApprovalStep} onDeviceApprove={handleDeviceApprove} deviceError={deviceError} />
+      <PendingActionCard pendingAction={pendingAction} expiryText={expiryWarning} onConfirm={() => handlePending('confirm')} onCancel={() => handlePending('cancel')} pendingRef={pendingRef} isSending={isSending} isDialog onHear={hearProduct} onBuy={sendMessage} deviceApprovalStep={deviceApprovalStep} onDeviceApprove={handleDeviceApprove} onPinApprove={() => openPinEntry('approve')} pinAvailable={pinStatus.allowed && pinStatus.configured} deviceSupported={deviceSupported} deviceError={deviceError} />
         </div>
       )}
-      {showSettings && <SettingsDrawer settings={settings} speechRate={speechRate} onSettingsChange={updateSettings} onSpeechRateChange={updateSpeechRate} onClose={() => setShowSettings(false)} speak={speak} deviceStatus={deviceStatus} deviceSupported={deviceSupported} deviceBusy={deviceBusy} onRegisterDevice={setupDevice} onRemoveDevice={forgetDevice} onRunSetup={() => beginSetup(1)} onFixMicrophone={() => beginSetup(2)} onFixDevice={() => beginSetup(3)} diagnostics={webauthnDiagnostics} onCopyLink={() => { navigator.clipboard?.writeText(window.location.href); announce('The link was copied. Open it in Chrome or Safari.') }} />}
-      {setupOpen && <SetupDialog step={setupStep} micStatus={micStatus} deviceSupported={deviceSupported} deviceStatus={deviceStatus} busy={setupBusy} onContinue={continueSetup} onDeviceSetup={guidedDeviceSetup} onPractice={practiceSetup} onSkip={skipSetup} onBack={() => { setSetupStep((current) => Math.max(1, current - 1)); setupMessage(en.setup.back) }} onRepeat={() => setupMessage(setupStep === 1 ? en.setup.welcome : setupStep === 2 ? en.setup.microphonePermission : setupStep === 3 ? en.setup.deviceIntro : en.setup.practiceIntro)} onFinish={() => finishSetup()} onUseTyping={useTypingInstead} />}
+      {showSettings && <SettingsDrawer settings={settings} speechRate={speechRate} onSettingsChange={updateSettings} onSpeechRateChange={updateSpeechRate} onClose={() => setShowSettings(false)} speak={speak} deviceStatus={deviceStatus} deviceSupported={deviceSupported} deviceBusy={deviceBusy} onRegisterDevice={setupDevice} onRemoveDevice={forgetDevice} onSetPin={() => openPinEntry(pinStatus.configured ? 'change' : 'set')} pinStatus={pinStatus} onRunSetup={() => beginSetup(1)} onFixMicrophone={() => beginSetup(2)} onFixDevice={() => beginSetup(3)} diagnostics={webauthnDiagnostics} onCopyLink={() => { navigator.clipboard?.writeText(window.location.href); announce('The link was copied. Open it in Chrome or Safari.') }} />}
+      {pinDialog && <PinDialog mode={pinDialog} value={pinValue} currentValue={pinCurrent} onValueChange={(value) => { setPinValue(value); announcePinDigit(value) }} onCurrentChange={setPinCurrent} onDone={submitPin} onCancel={() => setPinDialog(null)} />}
+      {setupOpen && <SetupDialog step={setupStep} micStatus={micStatus} deviceSupported={deviceSupported} deviceStatus={deviceStatus} busy={setupBusy} onContinue={continueSetup} onDeviceSetup={guidedDeviceSetup} onPinSetup={() => openPinEntry('set')} pinAvailable={pinStatus.allowed && pinStatus.configured === false} onPractice={practiceSetup} onSkip={skipSetup} onBack={() => { setSetupStep((current) => Math.max(1, current - 1)); setupMessage(en.setup.back) }} onRepeat={() => setupMessage(setupStep === 1 ? en.setup.welcome : setupStep === 2 ? en.setup.microphonePermission : setupStep === 3 ? en.setup.deviceIntro : en.setup.practiceIntro)} onFinish={() => finishSetup()} onUseTyping={useTypingInstead} />}
     </div>
   )
 }

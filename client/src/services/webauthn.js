@@ -78,3 +78,23 @@ export async function getDeviceStatus() {
 export async function removeDevice() {
   return request('/api/webauthn/credentials', { method: 'DELETE' })
 }
+
+export async function getPinStatus() {
+  return request('/api/pin/status')
+}
+
+export async function setPin(pin) {
+  return request('/api/pin/set', { method: 'POST', body: JSON.stringify({ pin }) })
+}
+
+export async function changePin(currentPin, pin) {
+  return request('/api/pin/change', { method: 'POST', body: JSON.stringify({ currentPin, pin }) })
+}
+
+export async function approveWithPin(actionId, pin, sessionId) {
+  return request('/api/pin/approve', {
+    method: 'POST',
+    headers: { 'X-Session-Id': sessionId },
+    body: JSON.stringify({ actionId, pin }),
+  })
+}

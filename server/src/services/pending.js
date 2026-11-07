@@ -71,6 +71,10 @@ export function getActionDetailsHash(action) {
 }
 
 export async function recordDeviceApproval(action, userId, sessionId, detailsHash) {
+  return recordApproval(action, userId, sessionId, detailsHash, 'webauthn')
+}
+
+export async function recordApproval(action, userId, sessionId, detailsHash, approvalMethod) {
   const approved = {
     ...action,
     deviceApproved: true,
@@ -78,6 +82,7 @@ export async function recordDeviceApproval(action, userId, sessionId, detailsHas
     deviceApprovalDetailsHash: detailsHash,
     deviceApprovalUserId: userId,
     deviceApprovalSessionId: sessionId,
+    approvalMethod,
   }
   await updatePendingAction(approved)
   Object.assign(action, approved)
@@ -200,6 +205,7 @@ export async function confirmPendingAction(actionId, confirmation, execute = exe
       fee: result?.fee,
       details: claimed.details,
       humanSummary: claimed.humanSummary,
+      approvalMethod: claimed.approvalMethod,
       result,
       createdAt: claimed.createdAt,
       confirmedAt: new Date().toISOString(),

@@ -15,6 +15,7 @@ const defaultFiles = {
   pendingActions: config.pendingActionStorePath || path.join(dataDirectory, 'pending-actions.json'),
   challenges: path.join(dataDirectory, 'webauthn-challenges.json'),
   sessions: path.join(dataDirectory, 'sessions.json'),
+  pins: path.join(dataDirectory, 'pins.json'),
 }
 
 const defaultContacts = [
@@ -176,9 +177,32 @@ export async function getCredentials(userId) {
     const snapshot = await firestore.collection('users').doc(userId).collection('credentials').limit(20).get()
     return snapshot.docs.map((doc) => ({ credentialID: doc.id, ...doc.data() }))
   }
+
   const state = await getFileState()
   const value = state.credentials[userId]
   return Array.isArray(value) ? value : []
+}
+
+export async function getPinRecord(userId) {
+  if (isFirestore()) {
+    assertFirestoreConfig()
+    const snapshot = await firestore.collection('users').doc(userId).collection('security').doc('pin').get()
+    return snapshot.exists ? snapshot.data() : null
+  }
+  const state = await getFileState()
+  return state.pins[userId] || null
+}
+
+export async function savePinRecord(userId, record) {
+  if (isFirestore()) {
+    assertFirestoreConfig()
+    await firestore.collection('users').doc(userId).collection('security').doc('pin').set(record)
+    return record
+  }
+  return updateFileState((state) => {
+    state.pins[userId] = record
+    return record
+  })
 }
 
 export async function saveCredential(userId, credential) {

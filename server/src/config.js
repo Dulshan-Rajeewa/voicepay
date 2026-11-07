@@ -40,6 +40,7 @@ const origins = (process.env.ALLOWED_ORIGINS ?? process.env.ORIGIN ?? process.en
   .filter(Boolean)
 
 const requireDeviceAuth = process.env.REQUIRE_DEVICE_AUTH !== 'false'
+const allowPinFallback = process.env.ALLOW_PIN_FALLBACK !== 'false'
 const storageDriver = process.env.STORAGE_DRIVER ?? 'file'
 
 if (!['file', 'firestore'].includes(storageDriver)) {
@@ -87,6 +88,7 @@ export const config = Object.freeze({
   rpId: process.env.RP_ID ?? 'localhost',
   rpName: process.env.RP_NAME ?? 'VoicePay',
   requireDeviceAuth,
+  allowPinFallback,
   storageDriver,
   credentialStorePath: process.env.CREDENTIAL_STORE_PATH ?? '',
   useMockPaypal,

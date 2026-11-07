@@ -128,3 +128,13 @@ html[data-theme="dark"] .action-tile { color: #000; }
 .troubleshoot summary { cursor: pointer; font-weight: 800; }
 .troubleshoot-copy { overflow-wrap: anywhere; font-size: .9rem; }
 .troubleshoot-copy p { margin: .4rem 0; }
+.pin-dialog { width: min(94vw, 30rem); max-height: 90vh; overflow: auto; padding: 1.5rem; border: 2px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); color: var(--text); }
+.pin-label { display: grid; gap: .4rem; margin: .75rem 0; font-weight: 800; }
+.pin-label input { min-height: 3.25rem; width: 100%; font-size: 1.5rem; letter-spacing: .35rem; text-align: center; }
+.pin-pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: .6rem; margin: 1rem 0; }
+.pin-pad button { min-height: 3.5rem; border: 2px solid var(--border); border-radius: var(--radius-md); background: var(--surface-strong); color: var(--text); font-size: 1.25rem; font-weight: 800; }
+.pin-dialog { width: min(94vw, 30rem); max-height: 90vh; overflow: auto; padding: 1.5rem; border: 2px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); color: var(--text); }
+.pin-label { display: grid; gap: .4rem; margin: .75rem 0; font-weight: 800; }
+.pin-label input { min-height: 3.25rem; width: 100%; font-size: 1.5rem; letter-spacing: .35rem; text-align: center; }
+.pin-pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: .6rem; margin: 1rem 0; }
+.pin-pad button { min-height: 3.5rem; border: 2px solid var(--border); border-radius: var(--radius-md); background: var(--surface-strong); color: var(--text); font-size: 1.25rem; font-weight: 800; }
