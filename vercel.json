@@ -7,8 +7,7 @@
     },
     "server": {
       "root": "server",
-      "framework": "express",
-      "maxDuration": 60
+      "framework": "express"
     }
   },
   "rewrites": [
